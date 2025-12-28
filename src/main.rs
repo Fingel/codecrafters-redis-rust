@@ -16,7 +16,7 @@ async fn process(stream: TcpStream) {
             match redis_value {
                 Ok(value) => match interpreter.interpret(value) {
                     Ok(RedisCommand::Ping) => {
-                        let resp = RedisValueRef::String(Bytes::from("PONG"));
+                        let resp = RedisValueRef::SimpleString(Bytes::from("PONG"));
                         transport.send(resp).await.unwrap();
                     }
                     Ok(RedisCommand::Echo(arg)) => {

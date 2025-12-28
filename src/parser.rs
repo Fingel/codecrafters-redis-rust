@@ -25,6 +25,7 @@ pub const EMPTY_ARRAY: &str = "*0\r\n";
 #[derive(PartialEq, Clone, Debug)]
 pub enum RedisValueRef {
     String(Bytes),
+    SimpleString(Bytes),
     Error(Bytes),
     Int(i64),
     Array(Vec<RedisValueRef>),
@@ -37,6 +38,7 @@ impl Display for RedisValueRef {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             RedisValueRef::String(s) => write!(f, "{}", String::from_utf8_lossy(s)),
+            RedisValueRef::SimpleString(s) => write!(f, "{}", String::from_utf8_lossy(s)),
             RedisValueRef::Error(e) => write!(f, "Error: {}", String::from_utf8_lossy(e)),
             RedisValueRef::Int(i) => write!(f, "{}", i),
             RedisValueRef::Array(a) => write!(
@@ -290,6 +292,11 @@ fn write_redis_value(item: RedisValueRef, dst: &mut BytesMut) {
             dst.extend_from_slice(b"$");
             dst.extend_from_slice(s.len().to_string().as_bytes());
             dst.extend_from_slice(b"\r\n");
+            dst.extend_from_slice(&s);
+            dst.extend_from_slice(b"\r\n");
+        }
+        RedisValueRef::SimpleString(s) => {
+            dst.extend_from_slice(b"+");
             dst.extend_from_slice(&s);
             dst.extend_from_slice(b"\r\n");
         }

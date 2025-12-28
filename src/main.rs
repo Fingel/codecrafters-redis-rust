@@ -29,7 +29,6 @@ fn main() {
                                 .for_each(|_| {
                                     write!(stream, "+PONG\r\n").unwrap();
                                 });
-                            break;
                         }
                         Err(e) => {
                             println!("error: {}", e);

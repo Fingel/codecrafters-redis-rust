@@ -1,21 +1,20 @@
-use std::io::{Read, Write};
-use std::net::TcpListener;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
-fn main() {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    println!("Logs from your program will appear here!");
+#[tokio::main]
+async fn main() {
+    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
 
-    // Uncomment the code below to pass the first stage
-    let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
+    loop {
+        let stream = listener.accept().await;
 
-    for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => {
-                println!("accepted new connection, spawning thread");
-                std::thread::spawn(move || {
+            Ok((mut stream, _)) => {
+                println!("Accepted new connection");
+                tokio::spawn(async move {
+                    let mut buffer = [0; 1024];
                     loop {
-                        let mut buffer = [0; 1024];
-                        match stream.read(&mut buffer) {
+                        match stream.read(&mut buffer).await {
                             Ok(n) => {
                                 if n == 0 {
                                     break;
@@ -25,23 +24,23 @@ fn main() {
                                 println!("received input: {}", input_str);
                                 let commands: Vec<_> =
                                     input_str.split_terminator("\\r\\n").collect();
-                                commands
-                                    .iter()
-                                    .filter(|cmd| cmd.contains("PING"))
-                                    .for_each(|_| {
-                                        write!(stream, "+PONG\r\n").unwrap();
-                                    });
+                                for _ in commands.iter().filter(|cmd| cmd.contains("PING")) {
+                                    if let Err(e) = stream.write(b"+PONG\r\n").await {
+                                        eprintln!("Error writing to stream: {}", e);
+                                        break;
+                                    }
+                                }
                             }
                             Err(e) => {
-                                println!("error: {}", e);
-                                break;
+                                eprintln!("Error reading from stream: {}", e);
                             }
                         }
                     }
                 });
             }
             Err(e) => {
-                println!("error: {}", e);
+                eprintln!("Error accepting connection: {}", e);
+                break;
             }
         }
     }

@@ -1,5 +1,40 @@
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use crate::interpreter::{RedisCommand, RedisInterpreter};
+use crate::parser::{RedisValueRef, RespParser};
+use bytes::Bytes;
+use futures::{SinkExt, StreamExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_util::codec::Decoder;
+
+pub mod interpreter;
+pub mod parser;
+
+async fn process(stream: TcpStream) {
+    tokio::spawn(async move {
+        let mut transport = RespParser.framed(stream);
+        let interpreter = RedisInterpreter::new();
+        while let Some(redis_value) = transport.next().await {
+            match redis_value {
+                Ok(value) => match interpreter.interpret(value) {
+                    Ok(RedisCommand::Ping) => {
+                        let resp = RedisValueRef::String(Bytes::from("PONG"));
+                        transport.send(resp).await.unwrap();
+                    }
+                    Ok(RedisCommand::Echo(arg)) => {
+                        transport.send(arg).await.unwrap();
+                    }
+                    Err(err) => {
+                        eprintln!("Command interpretation error: {}", err);
+                        let resp = RedisValueRef::Error(Bytes::from(format!("ERR {}", err)));
+                        transport.send(resp).await.unwrap();
+                    }
+                },
+                Err(err) => {
+                    eprintln!("Error processing Redis command: {:?}", err);
+                }
+            }
+        }
+    });
+}
 
 #[tokio::main]
 async fn main() {
@@ -9,34 +44,9 @@ async fn main() {
         let stream = listener.accept().await;
 
         match stream {
-            Ok((mut stream, _)) => {
+            Ok((stream, _)) => {
                 println!("Accepted new connection");
-                tokio::spawn(async move {
-                    let mut buffer = [0; 1024];
-                    loop {
-                        match stream.read(&mut buffer).await {
-                            Ok(n) => {
-                                if n == 0 {
-                                    break;
-                                }
-                                let input_str = String::from_utf8_lossy(&buffer[..n]);
-                                let input_str = input_str.trim();
-                                println!("received input: {}", input_str);
-                                let commands: Vec<_> =
-                                    input_str.split_terminator("\\r\\n").collect();
-                                for _ in commands.iter().filter(|cmd| cmd.contains("PING")) {
-                                    if let Err(e) = stream.write(b"+PONG\r\n").await {
-                                        eprintln!("Error writing to stream: {}", e);
-                                        break;
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Error reading from stream: {}", e);
-                            }
-                        }
-                    }
-                });
+                process(stream).await;
             }
             Err(e) => {
                 eprintln!("Error accepting connection: {}", e);

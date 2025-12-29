@@ -6,6 +6,7 @@ pub enum RedisCommand {
     Ping,
     Echo(RedisValueRef),
     Set(RedisValueRef, RedisValueRef),
+    SetEx(RedisValueRef, RedisValueRef, u64),
     Get(RedisValueRef),
 }
 
@@ -87,10 +88,26 @@ impl RedisInterpreter {
     }
 
     fn set(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
-        if args.len() < 3 {
-            Err(CmdError::InvalidArgumentNum)
-        } else {
-            Ok(RedisCommand::Set(args[1].clone(), args[2].clone()))
+        match args.len() {
+            3 => Ok(RedisCommand::Set(args[1].clone(), args[2].clone())),
+            5 => {
+                let ttl_string = args[4].to_string();
+                let ttl_arg = ttl_string
+                    .parse::<u64>()
+                    .map_err(|_| CmdError::InvalidArgument(ttl_string))?;
+                let ttl_type = args[3].to_string();
+                let ttl_val = match ttl_type.as_str() {
+                    "EX" => ttl_arg * 1000,
+                    "PX" => ttl_arg,
+                    _ => return Err(CmdError::InvalidArgument(ttl_type)),
+                };
+                Ok(RedisCommand::SetEx(
+                    args[1].clone(),
+                    args[2].clone(),
+                    ttl_val,
+                ))
+            }
+            _ => Err(CmdError::InvalidArgumentNum),
         }
     }
 

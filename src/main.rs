@@ -49,7 +49,7 @@ async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
 }
 
 fn ping() -> RedisValueRef {
-    RedisValueRef::String(Bytes::from("PONG"))
+    RedisValueRef::SimpleString(Bytes::from("PONG"))
 }
 
 fn echo(arg: RedisValueRef) -> RedisValueRef {

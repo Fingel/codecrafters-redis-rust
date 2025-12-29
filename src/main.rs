@@ -95,3 +95,22 @@ async fn main() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_set_get() {
+        let db = Arc::new(Mutex::new(HashMap::<String, Bytes>::new()));
+
+        let key = RedisValueRef::String(Bytes::from("key"));
+        let value = RedisValueRef::String(Bytes::from("value"));
+
+        let result = set(&db, key.clone(), value.clone()).await;
+        assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
+
+        let result = get(&db, key).await;
+        assert_eq!(result, RedisValueRef::String(Bytes::from("value")));
+    }
+}

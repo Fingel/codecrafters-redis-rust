@@ -1,26 +1,29 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::interpreter::{RedisCommand, RedisInterpreter};
 use crate::parser::{RedisValueRef, RespParser};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Mutex;
 use tokio_util::codec::Decoder;
 
 pub mod interpreter;
 pub mod parser;
 
-async fn process(stream: TcpStream) {
+type Db = Arc<Mutex<HashMap<String, Bytes>>>;
+
+async fn process(stream: TcpStream, db: Db) {
     tokio::spawn(async move {
         let mut transport = RespParser.framed(stream);
         let interpreter = RedisInterpreter::new();
         while let Some(redis_value) = transport.next().await {
             match redis_value {
                 Ok(value) => match interpreter.interpret(value) {
-                    Ok(RedisCommand::Ping) => {
-                        let resp = RedisValueRef::SimpleString(Bytes::from("PONG"));
-                        transport.send(resp).await.unwrap();
-                    }
-                    Ok(RedisCommand::Echo(arg)) => {
-                        transport.send(arg).await.unwrap();
+                    Ok(command) => {
+                        let result = handle_command(&db, command).await;
+                        transport.send(result).await.unwrap();
                     }
                     Err(err) => {
                         eprintln!("Command interpretation error: {}", err);
@@ -36,9 +39,46 @@ async fn process(stream: TcpStream) {
     });
 }
 
+async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
+    match command {
+        RedisCommand::Ping => ping(),
+        RedisCommand::Echo(arg) => echo(arg),
+        RedisCommand::Set(key, value) => set(db, key, value).await,
+        RedisCommand::Get(key) => get(db, key).await,
+    }
+}
+
+fn ping() -> RedisValueRef {
+    RedisValueRef::String(Bytes::from("PONG"))
+}
+
+fn echo(arg: RedisValueRef) -> RedisValueRef {
+    arg
+}
+
+async fn set(db: &Db, key: RedisValueRef, value: RedisValueRef) -> RedisValueRef {
+    match value {
+        RedisValueRef::String(s) => {
+            let mut db = db.lock().await;
+            db.insert(key.to_string(), s);
+            RedisValueRef::SimpleString(Bytes::from("OK"))
+        }
+        _ => RedisValueRef::Error(Bytes::from("ERR value must be a string")),
+    }
+}
+
+async fn get(db: &Db, key: RedisValueRef) -> RedisValueRef {
+    let db = db.lock().await;
+    match db.get(&key.to_string()) {
+        Some(value) => RedisValueRef::String(value.clone()),
+        None => RedisValueRef::NullBulkString,
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
+    let db = Arc::new(Mutex::new(HashMap::<String, Bytes>::new()));
 
     loop {
         let stream = listener.accept().await;
@@ -46,7 +86,7 @@ async fn main() {
         match stream {
             Ok((stream, _)) => {
                 println!("Accepted new connection");
-                process(stream).await;
+                process(stream, db.clone()).await;
             }
             Err(e) => {
                 eprintln!("Error accepting connection: {}", e);

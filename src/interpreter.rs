@@ -5,6 +5,8 @@ use std::fmt;
 pub enum RedisCommand {
     Ping,
     Echo(RedisValueRef),
+    Set(RedisValueRef, RedisValueRef),
+    Get(RedisValueRef),
 }
 
 #[derive(Debug)]
@@ -63,6 +65,8 @@ impl RedisInterpreter {
                 match command.as_str() {
                     "PING" => self.ping(),
                     "ECHO" => self.echo(&args),
+                    "SET" => self.set(&args),
+                    "GET" => self.get(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -79,6 +83,22 @@ impl RedisInterpreter {
             Err(CmdError::InvalidArgumentNum)
         } else {
             Ok(RedisCommand::Echo(args[1].clone()))
+        }
+    }
+
+    fn set(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+        if args.len() < 3 {
+            Err(CmdError::InvalidArgumentNum)
+        } else {
+            Ok(RedisCommand::Set(args[1].clone(), args[2].clone()))
+        }
+    }
+
+    fn get(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+        if args.len() < 2 {
+            Err(CmdError::InvalidArgumentNum)
+        } else {
+            Ok(RedisCommand::Get(args[1].clone()))
         }
     }
 }

@@ -108,6 +108,7 @@ async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::SetEx(key, value, ttl) => set_ex(db, key, value, ttl).await,
         RedisCommand::Get(key) => get(db, key).await,
         RedisCommand::Rpush(key, value) => rpush(db, key, value).await,
+        RedisCommand::Lpush(key, value) => lpush(db, key, value).await,
         RedisCommand::Lrange(key, start, stop) => lrange(db, key, start, stop).await,
     }
 }
@@ -182,6 +183,27 @@ async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
     match db.dict.get_mut(&key_string) {
         Some(RedisValue::List(list)) => {
             list.extend(value);
+            RedisValueRef::Int(list.len() as i64)
+        }
+        Some(RedisValue::String(_)) => RedisValueRef::Error(Bytes::from(
+            "Attempted to push to an array of the wrong type",
+        )),
+        None => {
+            let num_items = value.len() as i64;
+            db.dict.insert(key_string, RedisValue::List(value));
+            RedisValueRef::Int(num_items)
+        }
+    }
+}
+
+async fn lpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
+    let key_string = String::from_utf8_lossy(&key).to_string();
+    let mut db = db.write().await;
+    match db.dict.get_mut(&key_string) {
+        Some(RedisValue::List(list)) => {
+            let mut reversed = value.clone();
+            reversed.reverse();
+            list.splice(0..0, reversed);
             RedisValueRef::Int(list.len() as i64)
         }
         Some(RedisValue::String(_)) => RedisValueRef::Error(Bytes::from(
@@ -356,6 +378,30 @@ mod tests {
             RedisValueRef::Array(vec![
                 RedisValueRef::String(Bytes::from("value1")),
                 RedisValueRef::String(Bytes::from("value2")),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lpush() {
+        let db = setup();
+        let key = Bytes::from("key");
+        let value = vec![Bytes::from("c")];
+
+        let result = lpush(&db, key.clone(), value).await;
+        assert_eq!(result, RedisValueRef::Int(1));
+
+        let value = vec![Bytes::from("b"), Bytes::from("a")];
+        let result = lpush(&db, key.clone(), value).await;
+        assert_eq!(result, RedisValueRef::Int(3));
+
+        let result = lrange(&db, key, 0, -1).await;
+        assert_eq!(
+            result,
+            RedisValueRef::Array(vec![
+                RedisValueRef::String(Bytes::from("a")),
+                RedisValueRef::String(Bytes::from("b")),
+                RedisValueRef::String(Bytes::from("c")),
             ])
         );
     }

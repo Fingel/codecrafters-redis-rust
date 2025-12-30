@@ -11,6 +11,7 @@ pub enum RedisCommand {
     SetEx(Bytes, Bytes, u64),
     Get(Bytes),
     Rpush(Bytes, Vec<Bytes>),
+    Lpush(Bytes, Vec<Bytes>),
     Lrange(Bytes, i64, i64),
 }
 
@@ -89,6 +90,7 @@ impl RedisInterpreter {
                     "SET" => self.set(&args),
                     "GET" => self.get(&args),
                     "RPUSH" => self.rpush(&args),
+                    "LPUSH" => self.lpush(&args),
                     "LRANGE" => self.lrange(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
@@ -152,6 +154,21 @@ impl RedisInterpreter {
                 .collect();
             let values = values?;
             Ok(RedisCommand::Rpush(key, values))
+        }
+    }
+
+    fn lpush(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+        if args.len() < 3 {
+            Err(CmdError::InvalidArgumentNum)
+        } else {
+            let key = extract_string_arg(&args[1], "key")?;
+            let values: Result<Vec<Bytes>, CmdError> = args[2..]
+                .iter()
+                .enumerate()
+                .map(|(i, arg)| extract_string_arg(arg, &format!("value[{}]", i)))
+                .collect();
+            let values = values?;
+            Ok(RedisCommand::Lpush(key, values))
         }
     }
 

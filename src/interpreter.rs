@@ -8,6 +8,7 @@ pub enum RedisCommand {
     Set(RedisValueRef, RedisValueRef),
     SetEx(RedisValueRef, RedisValueRef, u64),
     Get(RedisValueRef),
+    Rpush(RedisValueRef, RedisValueRef),
 }
 
 #[derive(Debug)]
@@ -68,6 +69,7 @@ impl RedisInterpreter {
                     "ECHO" => self.echo(&args),
                     "SET" => self.set(&args),
                     "GET" => self.get(&args),
+                    "RPUSH" => self.rpush(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -116,6 +118,14 @@ impl RedisInterpreter {
             Err(CmdError::InvalidArgumentNum)
         } else {
             Ok(RedisCommand::Get(args[1].clone()))
+        }
+    }
+
+    fn rpush(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+        if args.len() < 3 {
+            Err(CmdError::InvalidArgumentNum)
+        } else {
+            Ok(RedisCommand::Rpush(args[1].clone(), args[2].clone()))
         }
     }
 }

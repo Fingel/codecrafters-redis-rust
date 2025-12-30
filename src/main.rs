@@ -62,6 +62,7 @@ async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Set(key, value) => set(db, key, value).await,
         RedisCommand::SetEx(key, value, ttl) => set_ex(db, key, value, ttl).await,
         RedisCommand::Get(key) => get(db, key).await,
+        RedisCommand::Rpush(key, value) => rpush(db, key, value).await,
     }
 }
 
@@ -130,6 +131,17 @@ async fn get(db: &Db, key: RedisValueRef) -> RedisValueRef {
     match db_r.dict.get(&key_string) {
         Some(value) => RedisValueRef::String(value.clone()),
         None => RedisValueRef::NullBulkString,
+    }
+}
+
+async fn rpush(db: &Db, key: RedisValueRef, value: RedisValueRef) -> RedisValueRef {
+    match value {
+        RedisValueRef::String(s) => {
+            let mut db = db.write().await;
+            db.dict.insert(key.to_string(), s);
+            RedisValueRef::Int(1)
+        }
+        _ => RedisValueRef::Error(Bytes::from("ERR value must be a string")),
     }
 }
 

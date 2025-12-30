@@ -11,6 +11,7 @@ pub enum RedisCommand {
     SetEx(Bytes, Bytes, u64),
     Get(Bytes),
     Rpush(Bytes, Vec<Bytes>),
+    Lrange(Bytes, i64, i64),
 }
 
 #[derive(Debug)]
@@ -72,6 +73,7 @@ impl RedisInterpreter {
                     "SET" => self.set(&args),
                     "GET" => self.get(&args),
                     "RPUSH" => self.rpush(&args),
+                    "LRANGE" => self.lrange(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -161,6 +163,33 @@ impl RedisInterpreter {
                 .collect();
             let values = values?;
             Ok(RedisCommand::Rpush(key, values))
+        }
+    }
+
+    fn lrange(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+        if args.len() != 4 {
+            Err(CmdError::InvalidArgumentNum)
+        } else {
+            let key = args[1]
+                .clone()
+                .as_string()
+                .map_err(|_| CmdError::InvalidArgument("key must be a string".into()))?
+                .clone();
+            let start = args[2]
+                .clone()
+                .as_lossy_string()
+                .map_err(|_| CmdError::InvalidArgument("start must be an integer".into()))?;
+            let stop = args[3]
+                .clone()
+                .as_lossy_string()
+                .map_err(|_| CmdError::InvalidArgument("stop must be an integer".into()))?;
+            let start = start
+                .parse::<i64>()
+                .map_err(|_| CmdError::InvalidArgument("start must be an integer".into()))?;
+            let stop = stop
+                .parse::<i64>()
+                .map_err(|_| CmdError::InvalidArgument("stop must be an integer".into()))?;
+            Ok(RedisCommand::Lrange(key, start, stop))
         }
     }
 }

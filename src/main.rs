@@ -108,6 +108,7 @@ async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::SetEx(key, value, ttl) => set_ex(db, key, value, ttl).await,
         RedisCommand::Get(key) => get(db, key).await,
         RedisCommand::Rpush(key, value) => rpush(db, key, value).await,
+        RedisCommand::Lrange(key, start, stop) => lrange(db, key, start, stop).await,
     }
 }
 
@@ -191,6 +192,21 @@ async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
             db.dict.insert(key_string, RedisValue::List(value));
             RedisValueRef::Int(num_items)
         }
+    }
+}
+
+async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef {
+    let key_string = String::from_utf8_lossy(&key).to_string();
+    let db_r = db.read().await;
+    match db_r.dict.get(&key_string) {
+        Some(RedisValue::List(list)) => {
+            let start = start.max(0);
+            let stop = stop.min(list.len() as i64 - 1);
+            let range = list[start as usize..=stop as usize].to_vec();
+            let refs = range.into_iter().map(RedisValueRef::String).collect();
+            RedisValueRef::Array(refs)
+        }
+        _ => RedisValueRef::Array(vec![]),
     }
 }
 
@@ -316,6 +332,29 @@ mod tests {
 
         // Get should return the list as an array
         let result = get(&db, key).await;
+        assert_eq!(
+            result,
+            RedisValueRef::Array(vec![
+                RedisValueRef::String(Bytes::from("value1")),
+                RedisValueRef::String(Bytes::from("value2")),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lrange() {
+        let db = setup();
+        let key = Bytes::from("key");
+        let value = vec![
+            Bytes::from("value1"),
+            Bytes::from("value2"),
+            Bytes::from("value3"),
+        ];
+        let result = rpush(&db, key.clone(), value).await;
+        assert_eq!(result, RedisValueRef::Int(3));
+
+        // Get should return the first two items
+        let result = lrange(&db, key, 0, 1).await;
         assert_eq!(
             result,
             RedisValueRef::Array(vec![

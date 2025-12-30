@@ -13,9 +13,54 @@ use tokio_util::codec::Decoder;
 pub mod interpreter;
 pub mod parser;
 
+// Storage Type
+#[derive(Debug, Clone, PartialEq)]
+enum RedisValue {
+    String(Bytes),
+    List(Vec<Bytes>),
+}
+
+/// Convert from storage format to wire protocol format
+impl From<&RedisValue> for RedisValueRef {
+    fn from(value: &RedisValue) -> Self {
+        match value {
+            RedisValue::String(s) => RedisValueRef::String(s.clone()),
+            RedisValue::List(items) => RedisValueRef::Array(
+                items
+                    .iter()
+                    .map(|item| RedisValueRef::String(item.clone()))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+/// Convert from wire protocol format to storage format
+impl TryFrom<RedisValueRef> for RedisValue {
+    type Error = String;
+
+    fn try_from(value: RedisValueRef) -> Result<Self, Self::Error> {
+        match value {
+            RedisValueRef::String(s) => Ok(RedisValue::String(s)),
+            RedisValueRef::Array(items) => {
+                // Convert array of RedisValueRef to List of Bytes
+                let mut bytes_vec = Vec::new();
+                for item in items {
+                    match item {
+                        RedisValueRef::String(s) => bytes_vec.push(s),
+                        _ => return Err("List can only contain strings".to_string()),
+                    }
+                }
+                Ok(RedisValue::List(bytes_vec))
+            }
+            _ => Err("Cannot convert this RedisValueRef to storage format".to_string()),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct RedisDb {
-    dict: HashMap<String, Bytes>,
+    dict: HashMap<String, RedisValue>,
     ttl: HashMap<String, u64>,
 }
 
@@ -75,31 +120,32 @@ fn echo(arg: RedisValueRef) -> RedisValueRef {
 }
 
 async fn set(db: &Db, key: RedisValueRef, value: RedisValueRef) -> RedisValueRef {
-    match value {
-        RedisValueRef::String(s) => {
-            let mut db = db.write().await;
-            db.dict.insert(key.to_string(), s);
-            RedisValueRef::SimpleString(Bytes::from("OK"))
-        }
-        _ => RedisValueRef::Error(Bytes::from("ERR value must be a string")),
-    }
+    let s = match value.expect_string() {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+
+    let mut db = db.write().await;
+    db.dict.insert(key.to_string(), RedisValue::String(s));
+    RedisValueRef::SimpleString(Bytes::from("OK"))
 }
 
 async fn set_ex(db: &Db, key: RedisValueRef, value: RedisValueRef, ttl: u64) -> RedisValueRef {
+    let s = match value.expect_string() {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+
     let expiry = (SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64)
         .saturating_add(ttl);
-    match value {
-        RedisValueRef::String(s) => {
-            let mut db = db.write().await;
-            db.dict.insert(key.to_string(), s);
-            db.ttl.insert(key.to_string(), expiry);
-            RedisValueRef::SimpleString(Bytes::from("OK"))
-        }
-        _ => RedisValueRef::Error(Bytes::from("ERR value must be a string")),
-    }
+
+    let mut db = db.write().await;
+    db.dict.insert(key.to_string(), RedisValue::String(s));
+    db.ttl.insert(key.to_string(), expiry);
+    RedisValueRef::SimpleString(Bytes::from("OK"))
 }
 
 async fn get(db: &Db, key: RedisValueRef) -> RedisValueRef {
@@ -129,19 +175,31 @@ async fn get(db: &Db, key: RedisValueRef) -> RedisValueRef {
     // If not expired, return value using read lock
     let db_r = db.read().await;
     match db_r.dict.get(&key_string) {
-        Some(value) => RedisValueRef::String(value.clone()),
+        Some(value) => value.into(),
         None => RedisValueRef::NullBulkString,
     }
 }
 
 async fn rpush(db: &Db, key: RedisValueRef, value: RedisValueRef) -> RedisValueRef {
-    match value {
-        RedisValueRef::String(s) => {
-            let mut db = db.write().await;
-            db.dict.insert(key.to_string(), s);
+    let s = match value.expect_string() {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+
+    let key_string = key.to_string();
+    let mut db = db.write().await;
+    match db.dict.get_mut(&key_string) {
+        Some(RedisValue::List(list)) => {
+            list.push(s);
+            RedisValueRef::Int(list.len() as i64)
+        }
+        Some(RedisValue::String(_)) => RedisValueRef::Error(Bytes::from(
+            "Attempted to push to an array of the wrong type",
+        )),
+        None => {
+            db.dict.insert(key_string, RedisValue::List(vec![s]));
             RedisValueRef::Int(1)
         }
-        _ => RedisValueRef::Error(Bytes::from("ERR value must be a string")),
     }
 }
 
@@ -210,5 +268,96 @@ mod tests {
 
         let result = get(&db, key).await;
         assert_eq!(result, RedisValueRef::String(Bytes::from("value")));
+    }
+
+    #[tokio::test]
+    async fn test_rpush_new_list() {
+        let db = setup();
+        let key = RedisValueRef::String(Bytes::from("key"));
+        let value = RedisValueRef::String(Bytes::from("value1"));
+
+        let result = rpush(&db, key.clone(), value).await;
+        assert_eq!(result, RedisValueRef::Int(1));
+
+        // Push another item
+        let value2 = RedisValueRef::String(Bytes::from("value2"));
+        let result = rpush(&db, key.clone(), value2).await;
+        assert_eq!(result, RedisValueRef::Int(2));
+
+        // Get should return the list as an array
+        let result = get(&db, key).await;
+        assert_eq!(
+            result,
+            RedisValueRef::Array(vec![
+                RedisValueRef::String(Bytes::from("value1")),
+                RedisValueRef::String(Bytes::from("value2")),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rpush_wrong_type() {
+        let db = setup();
+        let key = RedisValueRef::String(Bytes::from("key"));
+        let value = RedisValueRef::String(Bytes::from("string_value"));
+
+        // Set a string value
+        let result = set(&db, key.clone(), value).await;
+        assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
+
+        // Try to rpush to a string key - should fail
+        let list_value = RedisValueRef::String(Bytes::from("list_item"));
+        let result = rpush(&db, key, list_value).await;
+        match result {
+            RedisValueRef::Error(_) => {} // Expected
+            _ => panic!("Expected error when rpush on string key"),
+        }
+    }
+
+    #[test]
+    fn test_redis_value_trait_conversions() {
+        use std::convert::TryInto;
+
+        // Test From<&RedisValue> for RedisValueRef
+        let stored_string = RedisValue::String(Bytes::from("hello"));
+        let protocol: RedisValueRef = (&stored_string).into();
+        assert_eq!(protocol, RedisValueRef::String(Bytes::from("hello")));
+
+        // Test with list
+        let stored_list = RedisValue::List(vec![Bytes::from("a"), Bytes::from("b")]);
+        let protocol: RedisValueRef = (&stored_list).into();
+        match protocol {
+            RedisValueRef::Array(items) => assert_eq!(items.len(), 2),
+            _ => panic!("Expected array"),
+        }
+
+        // Test TryFrom<RedisValueRef> for RedisValue
+        let protocol_string = RedisValueRef::String(Bytes::from("world"));
+        let stored: Result<RedisValue, _> = protocol_string.try_into();
+        assert!(stored.is_ok());
+        assert_eq!(stored.unwrap(), RedisValue::String(Bytes::from("world")));
+
+        // Test that invalid conversions fail
+        let protocol_error = RedisValueRef::Error(Bytes::from("ERR"));
+        let stored: Result<RedisValue, _> = protocol_error.try_into();
+        assert!(stored.is_err());
+    }
+
+    #[test]
+    fn test_expect_string_helper() {
+        // Test successful extraction
+        let value = RedisValueRef::String(Bytes::from("hello"));
+        let result = value.expect_string();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Bytes::from("hello"));
+
+        // Test error on non-string
+        let value = RedisValueRef::Int(42);
+        let result = value.expect_string();
+        assert!(result.is_err());
+        match result {
+            Err(RedisValueRef::Error(_)) => {} // Expected
+            _ => panic!("Expected error response"),
+        }
     }
 }

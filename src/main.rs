@@ -198,16 +198,21 @@ async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
 async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
     let db_r = db.read().await;
-    match db_r.dict.get(&key_string) {
+    let bytes: Vec<Bytes> = match db_r.dict.get(&key_string) {
         Some(RedisValue::List(list)) => {
+            let list_len = list.len() as i64;
             let start = start.max(0);
-            let stop = stop.min(list.len() as i64 - 1);
-            let range = list[start as usize..=stop as usize].to_vec();
-            let refs = range.into_iter().map(RedisValueRef::String).collect();
-            RedisValueRef::Array(refs)
+            let stop = stop.min(list_len - 1);
+            if start >= list_len || start > stop {
+                vec![]
+            } else {
+                list[start as usize..=stop as usize].to_vec()
+            }
         }
-        _ => RedisValueRef::Array(vec![]),
-    }
+        _ => vec![],
+    };
+    let refs = bytes.into_iter().map(RedisValueRef::String).collect();
+    RedisValueRef::Array(refs)
 }
 
 #[tokio::main]

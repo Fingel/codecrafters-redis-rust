@@ -151,11 +151,16 @@ impl RedisInterpreter {
                 .as_string()
                 .map_err(|_| CmdError::InvalidArgument("key must be a string".into()))?
                 .clone();
-            let value = args[2]
-                .clone()
-                .as_string()
-                .map_err(|_| CmdError::InvalidArgument("value must be a string".into()))?;
-            Ok(RedisCommand::Rpush(key, vec![value]))
+            let values: Result<Vec<Bytes>, CmdError> = args[2..]
+                .iter()
+                .map(|arg| {
+                    arg.clone()
+                        .as_string()
+                        .map_err(|_| CmdError::InvalidArgument("value must be a string".into()))
+                })
+                .collect();
+            let values = values?;
+            Ok(RedisCommand::Rpush(key, values))
         }
     }
 }

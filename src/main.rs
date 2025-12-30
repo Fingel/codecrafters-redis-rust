@@ -187,8 +187,9 @@ async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
             "Attempted to push to an array of the wrong type",
         )),
         None => {
+            let num_items = value.len() as i64;
             db.dict.insert(key_string, RedisValue::List(value));
-            RedisValueRef::Int(1)
+            RedisValueRef::Int(num_items)
         }
     }
 }
@@ -302,6 +303,26 @@ mod tests {
             RedisValueRef::Error(_) => {} // Expected
             _ => panic!("Expected error when rpush on string key"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_rpush_multiple() {
+        let db = setup();
+        let key = Bytes::from("key");
+        let value = vec![Bytes::from("value1"), Bytes::from("value2")];
+
+        let result = rpush(&db, key.clone(), value).await;
+        assert_eq!(result, RedisValueRef::Int(2));
+
+        // Get should return the list as an array
+        let result = get(&db, key).await;
+        assert_eq!(
+            result,
+            RedisValueRef::Array(vec![
+                RedisValueRef::String(Bytes::from("value1")),
+                RedisValueRef::String(Bytes::from("value2")),
+            ])
+        );
     }
 
     #[test]

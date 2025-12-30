@@ -52,6 +52,11 @@ impl RedisValueRef {
             other => Err(other),
         }
     }
+
+    pub fn as_lossy_string(self) -> Result<String, Self> {
+        let bytes = self.as_string()?;
+        Ok(String::from_utf8_lossy(&bytes).to_string())
+    }
 }
 
 impl Display for RedisValueRef {

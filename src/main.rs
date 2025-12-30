@@ -115,27 +115,21 @@ fn ping() -> RedisValueRef {
     RedisValueRef::SimpleString(Bytes::from("PONG"))
 }
 
-fn echo(arg: RedisValueRef) -> RedisValueRef {
-    arg
+fn echo(arg: Bytes) -> RedisValueRef {
+    RedisValueRef::String(arg)
 }
 
-async fn set(db: &Db, key: RedisValueRef, value: RedisValueRef) -> RedisValueRef {
-    let s = match value.expect_string() {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-
+async fn set(db: &Db, key: Bytes, value: Bytes) -> RedisValueRef {
     let mut db = db.write().await;
-    db.dict.insert(key.to_string(), RedisValue::String(s));
+    db.dict.insert(
+        String::from_utf8_lossy(&key).to_string(),
+        RedisValue::String(value),
+    );
     RedisValueRef::SimpleString(Bytes::from("OK"))
 }
 
-async fn set_ex(db: &Db, key: RedisValueRef, value: RedisValueRef, ttl: u64) -> RedisValueRef {
-    let s = match value.expect_string() {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-
+async fn set_ex(db: &Db, key: Bytes, value: Bytes, ttl: u64) -> RedisValueRef {
+    let key_string = String::from_utf8_lossy(&key).to_string();
     let expiry = (SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -143,13 +137,14 @@ async fn set_ex(db: &Db, key: RedisValueRef, value: RedisValueRef, ttl: u64) -> 
         .saturating_add(ttl);
 
     let mut db = db.write().await;
-    db.dict.insert(key.to_string(), RedisValue::String(s));
-    db.ttl.insert(key.to_string(), expiry);
+    db.dict
+        .insert(key_string.clone(), RedisValue::String(value));
+    db.ttl.insert(key_string, expiry);
     RedisValueRef::SimpleString(Bytes::from("OK"))
 }
 
-async fn get(db: &Db, key: RedisValueRef) -> RedisValueRef {
-    let key_string = key.to_string();
+async fn get(db: &Db, key: Bytes) -> RedisValueRef {
+    let key_string = String::from_utf8_lossy(&key).to_string();
     // Check if expired with read lock
     let is_expired = {
         let db_r = db.read().await;
@@ -180,24 +175,19 @@ async fn get(db: &Db, key: RedisValueRef) -> RedisValueRef {
     }
 }
 
-async fn rpush(db: &Db, key: RedisValueRef, value: RedisValueRef) -> RedisValueRef {
-    let s = match value.expect_string() {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-
-    let key_string = key.to_string();
+async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
+    let key_string = String::from_utf8_lossy(&key).to_string();
     let mut db = db.write().await;
     match db.dict.get_mut(&key_string) {
         Some(RedisValue::List(list)) => {
-            list.push(s);
+            list.extend(value);
             RedisValueRef::Int(list.len() as i64)
         }
         Some(RedisValue::String(_)) => RedisValueRef::Error(Bytes::from(
             "Attempted to push to an array of the wrong type",
         )),
         None => {
-            db.dict.insert(key_string, RedisValue::List(vec![s]));
+            db.dict.insert(key_string, RedisValue::List(value));
             RedisValueRef::Int(1)
         }
     }
@@ -236,8 +226,8 @@ mod tests {
     #[tokio::test]
     async fn test_set_get() {
         let db = setup();
-        let key = RedisValueRef::String(Bytes::from("key"));
-        let value = RedisValueRef::String(Bytes::from("value"));
+        let key = Bytes::from("key");
+        let value = Bytes::from("value");
 
         let result = set(&db, key.clone(), value.clone()).await;
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
@@ -249,8 +239,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_set_expired() {
         let db = setup();
-        let key = RedisValueRef::String(Bytes::from("key"));
-        let value = RedisValueRef::String(Bytes::from("value"));
+        let key = Bytes::from("key");
+        let value = Bytes::from("value");
         let result = set_ex(&db, key.clone(), value.clone(), 1).await;
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -261,8 +251,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_set_not_expired() {
         let db = setup();
-        let key = RedisValueRef::String(Bytes::from("key"));
-        let value = RedisValueRef::String(Bytes::from("value"));
+        let key = Bytes::from("key");
+        let value = Bytes::from("value");
         let result = set_ex(&db, key.clone(), value.clone(), 1000000).await;
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
 
@@ -273,14 +263,14 @@ mod tests {
     #[tokio::test]
     async fn test_rpush_new_list() {
         let db = setup();
-        let key = RedisValueRef::String(Bytes::from("key"));
-        let value = RedisValueRef::String(Bytes::from("value1"));
+        let key = Bytes::from("key");
+        let value = vec![Bytes::from("value1")];
 
         let result = rpush(&db, key.clone(), value).await;
         assert_eq!(result, RedisValueRef::Int(1));
 
         // Push another item
-        let value2 = RedisValueRef::String(Bytes::from("value2"));
+        let value2 = vec![Bytes::from("value2")];
         let result = rpush(&db, key.clone(), value2).await;
         assert_eq!(result, RedisValueRef::Int(2));
 
@@ -298,15 +288,15 @@ mod tests {
     #[tokio::test]
     async fn test_rpush_wrong_type() {
         let db = setup();
-        let key = RedisValueRef::String(Bytes::from("key"));
-        let value = RedisValueRef::String(Bytes::from("string_value"));
+        let key = Bytes::from("key");
+        let value = Bytes::from("string_value");
 
         // Set a string value
         let result = set(&db, key.clone(), value).await;
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
 
         // Try to rpush to a string key - should fail
-        let list_value = RedisValueRef::String(Bytes::from("list_item"));
+        let list_value = vec![Bytes::from("list_item")];
         let result = rpush(&db, key, list_value).await;
         match result {
             RedisValueRef::Error(_) => {} // Expected

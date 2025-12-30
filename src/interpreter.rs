@@ -1,14 +1,16 @@
+use bytes::Bytes;
+
 use crate::parser::RedisValueRef;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
 pub enum RedisCommand {
     Ping,
-    Echo(RedisValueRef),
-    Set(RedisValueRef, RedisValueRef),
-    SetEx(RedisValueRef, RedisValueRef, u64),
-    Get(RedisValueRef),
-    Rpush(RedisValueRef, RedisValueRef),
+    Echo(Bytes),
+    Set(Bytes, Bytes),
+    SetEx(Bytes, Bytes, u64),
+    Get(Bytes),
+    Rpush(Bytes, Vec<Bytes>),
 }
 
 #[derive(Debug)]
@@ -85,29 +87,43 @@ impl RedisInterpreter {
         if args.len() < 2 {
             Err(CmdError::InvalidArgumentNum)
         } else {
-            Ok(RedisCommand::Echo(args[1].clone()))
+            Ok(RedisCommand::Echo(Bytes::from(args[1].to_string())))
         }
     }
 
     fn set(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+        if args.len() < 3 {
+            return Err(CmdError::InvalidArgumentNum);
+        }
+        let key = args[1]
+            .clone()
+            .as_string()
+            .map_err(|_| CmdError::InvalidArgument("key must be a string".into()))?
+            .clone();
+        let value = args[2]
+            .clone()
+            .as_string()
+            .map_err(|_| CmdError::InvalidArgument("value must be a string".into()))?;
         match args.len() {
-            3 => Ok(RedisCommand::Set(args[1].clone(), args[2].clone())),
+            3 => Ok(RedisCommand::Set(key, value)),
             5 => {
-                let ttl_string = args[4].to_string();
+                let ttl_string = args[4]
+                    .clone()
+                    .as_lossy_string()
+                    .map_err(|_| CmdError::InvalidArgument("ttl value must be a string".into()))?;
                 let ttl_arg = ttl_string
                     .parse::<u64>()
-                    .map_err(|_| CmdError::InvalidArgument(ttl_string))?;
-                let ttl_type = args[3].to_string();
+                    .map_err(|_| CmdError::InvalidArgument("Could not parse ttl value".into()))?;
+                let ttl_type = args[3]
+                    .clone()
+                    .as_lossy_string()
+                    .map_err(|_| CmdError::InvalidArgument("ttl type must be a string".into()))?;
                 let ttl_val = match ttl_type.as_str() {
                     "EX" => ttl_arg * 1000,
                     "PX" => ttl_arg,
                     _ => return Err(CmdError::InvalidArgument(ttl_type)),
                 };
-                Ok(RedisCommand::SetEx(
-                    args[1].clone(),
-                    args[2].clone(),
-                    ttl_val,
-                ))
+                Ok(RedisCommand::SetEx(key, value, ttl_val))
             }
             _ => Err(CmdError::InvalidArgumentNum),
         }
@@ -117,7 +133,12 @@ impl RedisInterpreter {
         if args.len() < 2 {
             Err(CmdError::InvalidArgumentNum)
         } else {
-            Ok(RedisCommand::Get(args[1].clone()))
+            let key = args[1]
+                .clone()
+                .as_string()
+                .map_err(|_| CmdError::InvalidArgument("key must be a string".into()))?
+                .clone();
+            Ok(RedisCommand::Get(key))
         }
     }
 
@@ -125,7 +146,16 @@ impl RedisInterpreter {
         if args.len() < 3 {
             Err(CmdError::InvalidArgumentNum)
         } else {
-            Ok(RedisCommand::Rpush(args[1].clone(), args[2].clone()))
+            let key = args[1]
+                .clone()
+                .as_string()
+                .map_err(|_| CmdError::InvalidArgument("key must be a string".into()))?
+                .clone();
+            let value = args[2]
+                .clone()
+                .as_string()
+                .map_err(|_| CmdError::InvalidArgument("value must be a string".into()))?;
+            Ok(RedisCommand::Rpush(key, vec![value]))
         }
     }
 }
@@ -158,9 +188,6 @@ mod tests {
             ]))
             .unwrap();
 
-        assert_eq!(
-            command,
-            RedisCommand::Echo(RedisValueRef::String(Bytes::from("Hello")))
-        );
+        assert_eq!(command, RedisCommand::Echo(Bytes::from("Hello")));
     }
 }

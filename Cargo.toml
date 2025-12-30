@@ -12,3 +12,10 @@ memchr = "2.7.6"
 thiserror = "1.0.32"                                # error handling
 tokio = { version = "1.23.0", features = ["full"] } # async networking
 tokio-util = { version = "0.7.17", features = ["codec"] }
+
+[dev-dependencies]
+criterion = { version = "0.8.1", features = ["async_tokio"] }
+
+[[bench]]
+name = "list_operations"
+harness = false

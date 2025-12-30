@@ -19,6 +19,15 @@ struct RedisDb {
     ttl: HashMap<String, u64>,
 }
 
+impl RedisDb {
+    pub fn new() -> Self {
+        RedisDb {
+            dict: HashMap::new(),
+            ttl: HashMap::new(),
+        }
+    }
+}
+
 type Db = Arc<RwLock<RedisDb>>;
 
 async fn process(stream: TcpStream, db: Db) {
@@ -127,10 +136,7 @@ async fn get(db: &Db, key: RedisValueRef) -> RedisValueRef {
 #[tokio::main]
 async fn main() {
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
-    let db = Arc::new(RwLock::new(RedisDb {
-        dict: HashMap::new(),
-        ttl: HashMap::new(),
-    }));
+    let db = Arc::new(RwLock::new(RedisDb::new()));
 
     loop {
         let stream = listener.accept().await;
@@ -154,10 +160,7 @@ mod tests {
     use std::time::Duration;
 
     fn setup() -> Arc<RwLock<RedisDb>> {
-        Arc::new(RwLock::new(RedisDb {
-            dict: HashMap::new(),
-            ttl: HashMap::new(),
-        }))
+        Arc::new(RwLock::new(RedisDb::new()))
     }
 
     #[tokio::test]

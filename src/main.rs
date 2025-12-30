@@ -201,20 +201,20 @@ async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef {
     let bytes: Vec<Bytes> = match db_r.dict.get(&key_string) {
         Some(RedisValue::List(list)) => {
             let list_len = list.len() as i64;
-            let start = if start.abs() >= list_len {
+            let start = if start < 0 && start.abs() >= list_len {
                 0
             } else if start < 0 {
                 start + list_len
             } else {
-                start
+                start.min(list_len - 1)
             };
 
-            let stop = if stop.abs() >= list_len {
+            let stop = if stop < 0 && stop.abs() >= list_len {
                 0
             } else if stop < 0 {
                 stop + list_len
             } else {
-                stop
+                stop.min(list_len - 1)
             };
 
             if start >= list_len || start > stop {
@@ -379,6 +379,30 @@ mod tests {
             RedisValueRef::Array(vec![
                 RedisValueRef::String(Bytes::from("value1")),
                 RedisValueRef::String(Bytes::from("value2")),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lrange_large_upper() {
+        let db = setup();
+        let key = Bytes::from("key");
+        let value = vec![
+            Bytes::from("value1"),
+            Bytes::from("value2"),
+            Bytes::from("value3"),
+        ];
+        let result = rpush(&db, key.clone(), value).await;
+        assert_eq!(result, RedisValueRef::Int(3));
+
+        // Get should return all
+        let result = lrange(&db, key, 0, 10).await;
+        assert_eq!(
+            result,
+            RedisValueRef::Array(vec![
+                RedisValueRef::String(Bytes::from("value1")),
+                RedisValueRef::String(Bytes::from("value2")),
+                RedisValueRef::String(Bytes::from("value3")),
             ])
         );
     }

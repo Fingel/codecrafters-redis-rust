@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::collections::HashMap; // TODO: try changing this to DashMap
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::parser::RedisValueRef;
 use bytes::Bytes;
-use tokio::sync::RwLock;
+use tokio::sync::RwLock; // Todo: check performance of using regular RwLock
 
 pub mod interpreter;
 pub mod parser;

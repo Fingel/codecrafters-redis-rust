@@ -209,6 +209,15 @@ pub async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef
     RedisValueRef::Array(refs)
 }
 
+pub async fn llen(db: &Db, key: Bytes) -> RedisValueRef {
+    let key_string = String::from_utf8_lossy(&key).to_string();
+    let db_r = db.read().await;
+    match db_r.dict.get(&key_string) {
+        Some(RedisValue::List(list)) => RedisValueRef::Int(list.len() as i64),
+        _ => RedisValueRef::Int(0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,6 +423,28 @@ mod tests {
                 RedisValueRef::String(Bytes::from("e")),
             ])
         );
+    }
+
+    #[tokio::test]
+    async fn test_llen() {
+        let db = setup();
+        let key = Bytes::from("key");
+        let value = vec![
+            Bytes::from("a"),
+            Bytes::from("b"),
+            Bytes::from("c"),
+            Bytes::from("d"),
+        ];
+        let result = rpush(&db, key.clone(), value).await;
+        assert_eq!(result, RedisValueRef::Int(4));
+
+        // Matches example test on #FV6
+        let result = llen(&db, key).await;
+        assert_eq!(result, RedisValueRef::Int(4));
+
+        // Non-existent key
+        let result = llen(&db, Bytes::from("nonexistent")).await;
+        assert_eq!(result, RedisValueRef::Int(0));
     }
 
     #[test]

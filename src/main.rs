@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use codecrafters_redis::{Db, RedisDb, echo, get, lpush, lrange, ping, rpush, set, set_ex};
+use codecrafters_redis::{Db, RedisDb, echo, get, llen, lpush, lrange, ping, rpush, set, set_ex};
 use codecrafters_redis::{
     interpreter::{RedisCommand, RedisInterpreter},
     parser::{RedisValueRef, RespParser},
@@ -46,6 +46,7 @@ async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Rpush(key, value) => rpush(db, key, value).await,
         RedisCommand::Lpush(key, value) => lpush(db, key, value).await,
         RedisCommand::Lrange(key, start, stop) => lrange(db, key, start, stop).await,
+        RedisCommand::LLen(key) => llen(db, key).await,
     }
 }
 

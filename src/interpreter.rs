@@ -13,6 +13,7 @@ pub enum RedisCommand {
     Rpush(Bytes, Vec<Bytes>),
     Lpush(Bytes, Vec<Bytes>),
     Lrange(Bytes, i64, i64),
+    LLen(Bytes),
 }
 
 #[derive(Debug, Error)]
@@ -92,6 +93,7 @@ impl RedisInterpreter {
                     "RPUSH" => self.rpush(&args),
                     "LPUSH" => self.lpush(&args),
                     "LRANGE" => self.lrange(&args),
+                    "LLEN" => self.llen(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -180,6 +182,15 @@ impl RedisInterpreter {
             let start = extract_integer_arg(&args[2], "start")?;
             let stop = extract_integer_arg(&args[3], "stop")?;
             Ok(RedisCommand::Lrange(key, start, stop))
+        }
+    }
+
+    fn llen(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+        if args.len() != 2 {
+            Err(CmdError::InvalidArgumentNum)
+        } else {
+            let key = extract_string_arg(&args[1], "key")?;
+            Ok(RedisCommand::LLen(key))
         }
     }
 }

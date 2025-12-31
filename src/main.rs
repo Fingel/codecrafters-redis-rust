@@ -49,7 +49,7 @@ async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Lpush(key, value) => lpush(db, key, value).await,
         RedisCommand::Lrange(key, start, stop) => lrange(db, key, start, stop).await,
         RedisCommand::LLen(key) => llen(db, key).await,
-        RedisCommand::LPop(key) => lpop(db, key).await,
+        RedisCommand::LPop(key, num_elements) => lpop(db, key, num_elements).await,
     }
 }
 

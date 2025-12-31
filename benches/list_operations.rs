@@ -88,22 +88,41 @@ fn criterion_benchmark(c: &mut Criterion) {
     }
     group.finish();
 
-    // Lpop for a single element
-    // This should get faster with a VecDeque
+    // LPop should get faster with a VecDeque
     let dbs_lpop: Vec<Db> = sizes
         .iter()
         .map(|&size| create_db_with_size(&rt, size))
         .collect();
 
-    let mut group = c.benchmark_group("single_item_lpop");
+    let mut group = c.benchmark_group("lpop");
     for (idx, &list_size) in sizes.iter().enumerate() {
         let db_lpop = &dbs_lpop[idx];
 
         group.bench_with_input(BenchmarkId::new("lpop", list_size), &list_size, |b, _| {
             b.to_async(&rt).iter(|| async {
-                lpop(black_box(db_lpop), black_box(Bytes::from("bench_key"))).await
+                lpop(
+                    black_box(db_lpop),
+                    black_box(Bytes::from("bench_key")),
+                    None,
+                )
+                .await
             });
         });
+
+        group.bench_with_input(
+            BenchmarkId::new("lpop multiple", list_size),
+            &list_size,
+            |b, _| {
+                b.to_async(&rt).iter(|| async {
+                    lpop(
+                        black_box(db_lpop),
+                        black_box(Bytes::from("bench_key")),
+                        Some(100),
+                    )
+                    .await
+                });
+            },
+        );
     }
     group.finish();
 }

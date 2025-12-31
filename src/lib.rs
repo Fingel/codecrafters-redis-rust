@@ -218,13 +218,19 @@ pub async fn llen(db: &Db, key: Bytes) -> RedisValueRef {
     }
 }
 
-pub async fn lpop(db: &Db, key: Bytes) -> RedisValueRef {
+pub async fn lpop(db: &Db, key: Bytes, num_elements: Option<u64>) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
     let mut db_w = db.write().await;
     match db_w.dict.get_mut(&key_string) {
         Some(RedisValue::List(list)) if !list.is_empty() => {
-            let val = list.remove(0); // Another place where Deque should help
-            RedisValueRef::String(val)
+            // VecDeque should help here
+            let num_elements = (num_elements.unwrap_or(1) as usize).min(list.len());
+            let ret: Vec<Bytes> = list.drain(0..num_elements).collect();
+            if ret.len() == 1 {
+                RedisValueRef::String(ret[0].clone())
+            } else {
+                RedisValueRef::Array(ret.into_iter().map(RedisValueRef::String).collect())
+            }
         }
         _ => RedisValueRef::NullBulkString,
     }
@@ -468,16 +474,60 @@ mod tests {
         assert_eq!(result, RedisValueRef::Int(1));
 
         // Matches example test on #EF1
-        let result = lpop(&db, key.clone()).await;
+        let result = lpop(&db, key.clone(), None).await;
         assert_eq!(result, RedisValueRef::String(Bytes::from("a")));
 
         // Should now be empty
-        let result = lpop(&db, key).await;
+        let result = lpop(&db, key, None).await;
         assert_eq!(result, RedisValueRef::NullBulkString);
 
         // Non-existent key
-        let result = lpop(&db, Bytes::from("nonexistent")).await;
+        let result = lpop(&db, Bytes::from("nonexistent"), None).await;
         assert_eq!(result, RedisValueRef::NullBulkString);
+    }
+
+    #[tokio::test]
+    async fn test_lpop_multiple() {
+        let db = setup();
+        let key = Bytes::from("key");
+        let value = vec![
+            Bytes::from("a"),
+            Bytes::from("b"),
+            Bytes::from("c"),
+            Bytes::from("d"),
+        ];
+        let result = rpush(&db, key.clone(), value).await;
+        assert_eq!(result, RedisValueRef::Int(4));
+
+        // Matches example test on #JP1
+        let result = lpop(&db, key.clone(), Some(2)).await;
+        assert_eq!(
+            result,
+            RedisValueRef::Array(vec![
+                RedisValueRef::String(Bytes::from("a")),
+                RedisValueRef::String(Bytes::from("b"))
+            ])
+        );
+
+        // List should now only contain c and d
+        let result = lrange(&db, key.clone(), 0, -1).await;
+        assert_eq!(
+            result,
+            RedisValueRef::Array(vec![
+                RedisValueRef::String(Bytes::from("c")),
+                RedisValueRef::String(Bytes::from("d"))
+            ])
+        );
+
+        // Should remove all elements
+        let result = lpop(&db, key.clone(), Some(100)).await;
+        assert_eq!(
+            result,
+            RedisValueRef::Array(vec![
+                RedisValueRef::String(Bytes::from("c")),
+                RedisValueRef::String(Bytes::from("d"))
+            ])
+        );
     }
 
     #[test]

@@ -14,7 +14,7 @@ pub enum RedisCommand {
     Lpush(Bytes, Vec<Bytes>),
     Lrange(Bytes, i64, i64),
     LLen(Bytes),
-    LPop(Bytes),
+    LPop(Bytes, Option<u64>),
 }
 
 #[derive(Debug, Error)]
@@ -197,11 +197,14 @@ impl RedisInterpreter {
     }
 
     fn lpop(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
-        if args.len() != 2 {
+        if args.len() < 2 || args.len() > 3 {
             Err(CmdError::InvalidArgumentNum)
         } else {
             let key = extract_string_arg(&args[1], "key")?;
-            Ok(RedisCommand::LPop(key))
+            args.get(2)
+                .map(|num_elements| extract_u64_arg(num_elements, "num_elements"))
+                .transpose()
+                .map(|num_elements| RedisCommand::LPop(key, num_elements))
         }
     }
 }

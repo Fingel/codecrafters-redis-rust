@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use codecrafters_redis::{Db, RedisDb, lpush, lrange, rpush};
+use codecrafters_redis::{Db, RedisDb, lpop, lpush, lrange, rpush};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::{hint::black_box, sync::Arc};
 use tokio::sync::RwLock;
@@ -83,6 +83,25 @@ fn criterion_benchmark(c: &mut Criterion) {
                     end,
                 )
                 .await
+            });
+        });
+    }
+    group.finish();
+
+    // Lpop for a single element
+    // This should get faster with a VecDeque
+    let dbs_lpop: Vec<Db> = sizes
+        .iter()
+        .map(|&size| create_db_with_size(&rt, size))
+        .collect();
+
+    let mut group = c.benchmark_group("single_item_lpop");
+    for (idx, &list_size) in sizes.iter().enumerate() {
+        let db_lpop = &dbs_lpop[idx];
+
+        group.bench_with_input(BenchmarkId::new("lpop", list_size), &list_size, |b, _| {
+            b.to_async(&rt).iter(|| async {
+                lpop(black_box(db_lpop), black_box(Bytes::from("bench_key"))).await
             });
         });
     }

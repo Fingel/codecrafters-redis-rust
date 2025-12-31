@@ -218,6 +218,18 @@ pub async fn llen(db: &Db, key: Bytes) -> RedisValueRef {
     }
 }
 
+pub async fn lpop(db: &Db, key: Bytes) -> RedisValueRef {
+    let key_string = String::from_utf8_lossy(&key).to_string();
+    let mut db_w = db.write().await;
+    match db_w.dict.get_mut(&key_string) {
+        Some(RedisValue::List(list)) if !list.is_empty() => {
+            let val = list.remove(0); // Another place where Deque should help
+            RedisValueRef::String(val)
+        }
+        _ => RedisValueRef::NullBulkString,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,6 +457,27 @@ mod tests {
         // Non-existent key
         let result = llen(&db, Bytes::from("nonexistent")).await;
         assert_eq!(result, RedisValueRef::Int(0));
+    }
+
+    #[tokio::test]
+    async fn test_lpop() {
+        let db = setup();
+        let key = Bytes::from("key");
+        let value = vec![Bytes::from("a")];
+        let result = rpush(&db, key.clone(), value).await;
+        assert_eq!(result, RedisValueRef::Int(1));
+
+        // Matches example test on #EF1
+        let result = lpop(&db, key.clone()).await;
+        assert_eq!(result, RedisValueRef::String(Bytes::from("a")));
+
+        // Should now be empty
+        let result = lpop(&db, key).await;
+        assert_eq!(result, RedisValueRef::NullBulkString);
+
+        // Non-existent key
+        let result = lpop(&db, Bytes::from("nonexistent")).await;
+        assert_eq!(result, RedisValueRef::NullBulkString);
     }
 
     #[test]

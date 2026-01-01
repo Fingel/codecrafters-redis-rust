@@ -625,6 +625,39 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_blpop() {
+        let db = setup();
+        let key = Bytes::from("mylist");
+
+        let db_clone = db.clone();
+        let key_clone = key.clone();
+
+        // Spawn a task that pushes after a short delay
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            lpush(&db_clone, key_clone, vec![Bytes::from("delayed_value")]).await;
+        });
+
+        // This should unblock when the push happens
+        let start = std::time::Instant::now();
+        let result = blpop(&db, key.clone(), Some(2)).await;
+        let elapsed = start.elapsed();
+
+        // Should complete in ~50ms, not 2 seconds
+        assert!(elapsed < Duration::from_millis(500));
+        match result {
+            RedisValueRef::Array(items) => {
+                assert_eq!(items.len(), 2);
+                assert_eq!(
+                    items[1],
+                    RedisValueRef::String(Bytes::from("delayed_value"))
+                );
+            }
+            _ => panic!("Expected array result"),
+        }
+    }
+
     #[test]
     fn test_redis_value_trait_conversions() {
         use std::convert::TryInto;

@@ -297,8 +297,8 @@ pub async fn lpop(db: &Db, key: Bytes, num_elements: Option<u64>) -> RedisValueR
 }
 
 // blocking lpop
-pub async fn blpop(db: &Db, key: Bytes, timeout: Option<u64>) -> RedisValueRef {
-    let timeout = timeout.unwrap_or(0);
+pub async fn blpop(db: &Db, key: Bytes, timeout: Option<f64>) -> RedisValueRef {
+    let timeout = timeout.unwrap_or(0.0);
     let key_string = String::from_utf8_lossy(&key).to_string();
     let exists = get(db, key.clone()).await;
     match exists {
@@ -308,8 +308,8 @@ pub async fn blpop(db: &Db, key: Bytes, timeout: Option<u64>) -> RedisValueRef {
                 let mut waiters = db.waiters.lock().unwrap();
                 waiters.entry(key_string.clone()).or_default().push_back(tx);
             }
-            let res = if timeout > 0 {
-                tokio::time::timeout(Duration::from_secs(timeout), rx)
+            let res = if timeout > 0.0 {
+                tokio::time::timeout(Duration::from_millis((timeout * 1000.0) as u64), rx)
                     .await
                     .ok()
                     .and_then(Result::ok)
@@ -641,7 +641,7 @@ mod tests {
 
         // This should unblock when the push happens
         let start = std::time::Instant::now();
-        let result = blpop(&db, key.clone(), Some(2)).await;
+        let result = blpop(&db, key.clone(), Some(2.0)).await;
         let elapsed = start.elapsed();
 
         // Should complete in ~50ms, not 2 seconds

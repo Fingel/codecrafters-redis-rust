@@ -15,7 +15,7 @@ pub enum RedisCommand {
     Lrange(Bytes, i64, i64),
     LLen(Bytes),
     LPop(Bytes, Option<u64>),
-    BLPop(Bytes, Option<u64>),
+    BLPop(Bytes, Option<f64>),
 }
 
 #[derive(Debug, Error)]
@@ -32,7 +32,7 @@ pub enum CmdError {
     InvalidStringArg { field: String },
     #[error("{field} must be an integer")]
     InvalidIntegerArg { field: String },
-    #[error("could not parse {field} as integer")]
+    #[error("could not parse {field}")]
     ParseError { field: String },
 }
 
@@ -59,6 +59,13 @@ fn extract_integer_arg(arg: &RedisValueRef, field_name: &str) -> Result<i64, Cmd
 fn extract_u64_arg(arg: &RedisValueRef, field_name: &str) -> Result<u64, CmdError> {
     let string_val = extract_lossy_string_arg(arg, field_name)?;
     string_val.parse::<u64>().map_err(|_| CmdError::ParseError {
+        field: field_name.to_string(),
+    })
+}
+
+fn extract_f64_arg(arg: &RedisValueRef, field_name: &str) -> Result<f64, CmdError> {
+    let string_val = extract_lossy_string_arg(arg, field_name)?;
+    string_val.parse::<f64>().map_err(|_| CmdError::ParseError {
         field: field_name.to_string(),
     })
 }
@@ -216,7 +223,7 @@ impl RedisInterpreter {
         } else {
             let key = extract_string_arg(&args[1], "key")?;
             args.get(2)
-                .map(|timeout| extract_u64_arg(timeout, "timeout"))
+                .map(|timeout| extract_f64_arg(timeout, "timeout"))
                 .transpose()
                 .map(|timeout| RedisCommand::BLPop(key, timeout))
         }

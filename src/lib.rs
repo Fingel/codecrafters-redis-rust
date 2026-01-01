@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::parser::RedisValueRef;
 use bytes::Bytes;
@@ -297,7 +297,8 @@ pub async fn lpop(db: &Db, key: Bytes, num_elements: Option<u64>) -> RedisValueR
 }
 
 // blocking lpop
-pub async fn blpop(db: &Db, key: Bytes, _timeout: Option<u64>) -> RedisValueRef {
+pub async fn blpop(db: &Db, key: Bytes, timeout: Option<u64>) -> RedisValueRef {
+    let timeout = timeout.unwrap_or(0);
     let key_string = String::from_utf8_lossy(&key).to_string();
     let exists = get(db, key.clone()).await;
     match exists {
@@ -307,12 +308,20 @@ pub async fn blpop(db: &Db, key: Bytes, _timeout: Option<u64>) -> RedisValueRef 
                 let mut waiters = db.waiters.lock().unwrap();
                 waiters.entry(key_string.clone()).or_default().push_back(tx);
             }
-            match rx.await {
-                Ok(val) => RedisValueRef::Array(vec![
+            let res = if timeout > 0 {
+                tokio::time::timeout(Duration::from_secs(timeout), rx)
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+            } else {
+                rx.await.ok()
+            };
+            match res {
+                Some(val) => RedisValueRef::Array(vec![
                     RedisValueRef::String(key),
                     RedisValueRef::String(val),
                 ]),
-                Err(_) => RedisValueRef::NullBulkString,
+                None => RedisValueRef::NullArray,
             }
         }
         _ => {

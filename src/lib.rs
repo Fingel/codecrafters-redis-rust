@@ -1,5 +1,5 @@
-use std::collections::VecDeque;
-use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::parser::RedisValueRef;
@@ -58,7 +58,7 @@ impl TryFrom<RedisValueRef> for RedisValue {
 pub struct RedisDb {
     pub dict: DashMap<String, RedisValue>,
     pub ttl: DashMap<String, u64>,
-    pub waiters: DashMap<String, VecDeque<tokio::sync::mpsc::Sender<Bytes>>>,
+    pub waiters: Arc<Mutex<HashMap<String, VecDeque<tokio::sync::oneshot::Sender<Bytes>>>>>,
 }
 
 impl RedisDb {
@@ -66,7 +66,7 @@ impl RedisDb {
         RedisDb {
             dict: DashMap::new(),
             ttl: DashMap::new(),
-            waiters: DashMap::new(),
+            waiters: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -142,22 +142,25 @@ async fn notify_waiters(db: &Db, key: &str) {
         let mut values = Vec::new();
         if let Some(mut list_entry) = db.dict.get_mut(key)
             && let RedisValue::List(list) = &mut *list_entry
-            && let Some(waiters) = db.waiters.get(key)
         {
-            // Pop min(waiters, list_items) elements
-            let count = waiters.len().min(list.len());
-            values = list.drain(0..count).collect();
+            let waiters = db.waiters.lock().unwrap();
+            if let Some(waiter_queue) = waiters.get(key) {
+                // Pop min(waiters, list_items) elements
+                let count = waiter_queue.len().min(list.len());
+                values = list.drain(0..count).collect();
+            }
         }
         values
     };
 
     // Send each waiter their value
-    if !assignments.is_empty()
-        && let Some(mut waiters) = db.waiters.get_mut(key)
-    {
-        for value in assignments {
-            if let Some(tx) = waiters.pop_front() {
-                let _ = tx.send(value).await;
+    if !assignments.is_empty() {
+        let mut waiters = db.waiters.lock().unwrap();
+        if let Some(waiter_queue) = waiters.get_mut(key) {
+            for value in assignments {
+                if let Some(tx) = waiter_queue.pop_front() {
+                    let _ = tx.send(value);
+                }
             }
         }
     }
@@ -299,22 +302,17 @@ pub async fn blpop(db: &Db, key: Bytes, _timeout: Option<u64>) -> RedisValueRef 
     let exists = get(db, key.clone()).await;
     match exists {
         RedisValueRef::NullBulkString => {
-            let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-            match db.waiters.get_mut(&key_string) {
-                Some(mut waiters) => waiters.push_back(tx),
-                None => {
-                    let mut waiters = VecDeque::new();
-                    waiters.push_back(tx);
-                    db.waiters.insert(key_string, waiters);
-                }
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            {
+                let mut waiters = db.waiters.lock().unwrap();
+                waiters.entry(key_string.clone()).or_default().push_back(tx);
             }
-            let res = rx.recv().await;
-            match res {
-                Some(val) => RedisValueRef::Array(vec![
+            match rx.await {
+                Ok(val) => RedisValueRef::Array(vec![
                     RedisValueRef::String(key),
                     RedisValueRef::String(val),
                 ]),
-                None => RedisValueRef::NullBulkString,
+                Err(_) => RedisValueRef::NullBulkString,
             }
         }
         _ => {

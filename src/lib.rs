@@ -82,7 +82,6 @@ pub fn echo(arg: Bytes) -> RedisValueRef {
 }
 
 pub async fn set(db: &Db, key: Bytes, value: Bytes) -> RedisValueRef {
-    // TODO: why are we owning key here and in all other functions?
     db.dict.insert(
         String::from_utf8_lossy(&key).to_string(),
         RedisValue::String(value),

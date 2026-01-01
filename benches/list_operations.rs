@@ -1,13 +1,10 @@
 use bytes::Bytes;
 use codecrafters_redis::{Db, RedisDb, lpop, lpush, lrange, rpush};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use std::{
-    hint::black_box,
-    sync::{Arc, RwLock},
-};
+use std::{hint::black_box, sync::Arc};
 
 fn create_db_with_size(rt: &tokio::runtime::Runtime, size: usize) -> Db {
-    let db: Db = Arc::new(RwLock::new(RedisDb::new()));
+    let db: Db = Arc::new(RedisDb::new());
     if size > 0 {
         let items: Vec<Bytes> = (0..size)
             .map(|i| Bytes::from(format!("item{}", i)))

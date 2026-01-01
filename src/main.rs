@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use bytes::Bytes;
 use codecrafters_redis::{
@@ -55,7 +55,7 @@ async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
 #[tokio::main]
 async fn main() {
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
-    let db = Arc::new(RwLock::new(RedisDb::new()));
+    let db = Arc::new(RedisDb::new());
 
     loop {
         let stream = listener.accept().await;

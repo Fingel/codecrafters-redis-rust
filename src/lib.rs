@@ -1,9 +1,9 @@
-use std::collections::HashMap; // TODO: try changing this to DashMap
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::parser::RedisValueRef;
 use bytes::Bytes;
+use dashmap::DashMap;
 
 pub mod interpreter;
 pub mod parser;
@@ -55,20 +55,20 @@ impl TryFrom<RedisValueRef> for RedisValue {
 
 #[derive(Debug, Clone, Default)]
 pub struct RedisDb {
-    pub dict: HashMap<String, RedisValue>,
-    pub ttl: HashMap<String, u64>,
+    pub dict: DashMap<String, RedisValue>,
+    pub ttl: DashMap<String, u64>,
 }
 
 impl RedisDb {
     pub fn new() -> Self {
         RedisDb {
-            dict: HashMap::new(),
-            ttl: HashMap::new(),
+            dict: DashMap::new(),
+            ttl: DashMap::new(),
         }
     }
 }
 
-pub type Db = Arc<RwLock<RedisDb>>;
+pub type Db = Arc<RedisDb>;
 
 pub fn ping() -> RedisValueRef {
     RedisValueRef::SimpleString(Bytes::from("PONG"))
@@ -79,7 +79,6 @@ pub fn echo(arg: Bytes) -> RedisValueRef {
 }
 
 pub async fn set(db: &Db, key: Bytes, value: Bytes) -> RedisValueRef {
-    let mut db = db.write().unwrap();
     db.dict.insert(
         String::from_utf8_lossy(&key).to_string(),
         RedisValue::String(value),
@@ -95,7 +94,6 @@ pub async fn set_ex(db: &Db, key: Bytes, value: Bytes, ttl: u64) -> RedisValueRe
         .as_millis() as u64)
         .saturating_add(ttl);
 
-    let mut db = db.write().unwrap();
     db.dict
         .insert(key_string.clone(), RedisValue::String(value));
     db.ttl.insert(key_string, expiry);
@@ -106,8 +104,7 @@ pub async fn get(db: &Db, key: Bytes) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
     // Check if expired with read lock
     let is_expired = {
-        let db_r = db.read().unwrap();
-        if let Some(expiry) = db_r.ttl.get(&key_string) {
+        if let Some(expiry) = db.ttl.get(&key_string) {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -120,31 +117,30 @@ pub async fn get(db: &Db, key: Bytes) -> RedisValueRef {
 
     // If expired, remove both entries using write lock
     if is_expired {
-        let mut db_w = db.write().unwrap();
-        db_w.dict.remove(&key_string);
-        db_w.ttl.remove(&key_string);
+        db.dict.remove(&key_string);
+        db.ttl.remove(&key_string);
         return RedisValueRef::NullBulkString;
     }
 
     // If not expired, return value using read lock
-    let db_r = db.read().unwrap();
-    match db_r.dict.get(&key_string) {
-        Some(value) => value.into(),
+    match db.dict.get(&key_string) {
+        Some(value) => RedisValueRef::from(&*value),
         None => RedisValueRef::NullBulkString,
     }
 }
 
 pub async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    let mut db = db.write().unwrap();
     match db.dict.get_mut(&key_string) {
-        Some(RedisValue::List(list)) => {
-            list.extend(value);
-            RedisValueRef::Int(list.len() as i64)
-        }
-        Some(RedisValue::String(_)) => RedisValueRef::Error(Bytes::from(
-            "Attempted to push to an array of the wrong type",
-        )),
+        Some(mut entry) => match &mut *entry {
+            RedisValue::List(list) => {
+                list.extend(value);
+                RedisValueRef::Int(list.len() as i64)
+            }
+            RedisValue::String(_) => RedisValueRef::Error(Bytes::from(
+                "Attempted to push to an array of the wrong type",
+            )),
+        },
         None => {
             let num_items = value.len() as i64;
             db.dict.insert(key_string, RedisValue::List(value));
@@ -155,17 +151,18 @@ pub async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
 
 pub async fn lpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    let mut db = db.write().unwrap();
     match db.dict.get_mut(&key_string) {
-        Some(RedisValue::List(list)) => {
-            let mut reversed = value.clone();
-            reversed.reverse();
-            list.splice(0..0, reversed);
-            RedisValueRef::Int(list.len() as i64)
-        }
-        Some(RedisValue::String(_)) => RedisValueRef::Error(Bytes::from(
-            "Attempted to push to an array of the wrong type",
-        )),
+        Some(mut entry) => match &mut *entry {
+            RedisValue::List(list) => {
+                let mut reversed = value.clone();
+                reversed.reverse();
+                list.splice(0..0, reversed);
+                RedisValueRef::Int(list.len() as i64)
+            }
+            RedisValue::String(_) => RedisValueRef::Error(Bytes::from(
+                "Attempted to push to an array of the wrong type",
+            )),
+        },
         None => {
             let num_items = value.len() as i64;
             db.dict.insert(key_string, RedisValue::List(value));
@@ -176,33 +173,35 @@ pub async fn lpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
 
 pub async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    let db_r = db.read().unwrap();
-    let bytes: Vec<Bytes> = match db_r.dict.get(&key_string) {
-        Some(RedisValue::List(list)) => {
-            let list_len = list.len() as i64;
-            let start = if start < 0 && start.abs() >= list_len {
-                0
-            } else if start < 0 {
-                start + list_len
-            } else {
-                start.min(list_len - 1)
-            };
+    let bytes: Vec<Bytes> = match db.dict.get(&key_string) {
+        Some(entry) => match &*entry {
+            RedisValue::List(list) => {
+                let list_len = list.len() as i64;
+                let start = if start < 0 && start.abs() >= list_len {
+                    0
+                } else if start < 0 {
+                    start + list_len
+                } else {
+                    start.min(list_len - 1)
+                };
 
-            let stop = if stop < 0 && stop.abs() >= list_len {
-                0
-            } else if stop < 0 {
-                stop + list_len
-            } else {
-                stop.min(list_len - 1)
-            };
+                let stop = if stop < 0 && stop.abs() >= list_len {
+                    0
+                } else if stop < 0 {
+                    stop + list_len
+                } else {
+                    stop.min(list_len - 1)
+                };
 
-            if start >= list_len || start > stop {
-                vec![]
-            } else {
-                list[start as usize..=stop as usize].to_vec()
+                if start >= list_len || start > stop {
+                    vec![]
+                } else {
+                    list[start as usize..=stop as usize].to_vec()
+                }
             }
-        }
-        _ => vec![],
+            _ => vec![],
+        },
+        None => vec![],
     };
     let refs = bytes.into_iter().map(RedisValueRef::String).collect();
     RedisValueRef::Array(refs)
@@ -210,28 +209,32 @@ pub async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef
 
 pub async fn llen(db: &Db, key: Bytes) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    let db_r = db.read().unwrap();
-    match db_r.dict.get(&key_string) {
-        Some(RedisValue::List(list)) => RedisValueRef::Int(list.len() as i64),
-        _ => RedisValueRef::Int(0),
+    match db.dict.get(&key_string) {
+        Some(entry) => match &*entry {
+            RedisValue::List(list) => RedisValueRef::Int(list.len() as i64),
+            _ => RedisValueRef::Int(0),
+        },
+        None => RedisValueRef::Int(0),
     }
 }
 
 pub async fn lpop(db: &Db, key: Bytes, num_elements: Option<u64>) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    let mut db_w = db.write().unwrap();
-    match db_w.dict.get_mut(&key_string) {
-        Some(RedisValue::List(list)) if !list.is_empty() => {
-            // VecDeque should help here
-            let num_elements = (num_elements.unwrap_or(1) as usize).min(list.len());
-            let ret: Vec<Bytes> = list.drain(0..num_elements).collect();
-            if ret.len() == 1 {
-                RedisValueRef::String(ret[0].clone())
-            } else {
-                RedisValueRef::Array(ret.into_iter().map(RedisValueRef::String).collect())
+    match db.dict.get_mut(&key_string) {
+        Some(mut entry) => match &mut *entry {
+            RedisValue::List(list) if !list.is_empty() => {
+                // VecDeque should help here
+                let num_elements = (num_elements.unwrap_or(1) as usize).min(list.len());
+                let ret: Vec<Bytes> = list.drain(0..num_elements).collect();
+                if ret.len() == 1 {
+                    RedisValueRef::String(ret[0].clone())
+                } else {
+                    RedisValueRef::Array(ret.into_iter().map(RedisValueRef::String).collect())
+                }
             }
-        }
-        _ => RedisValueRef::NullBulkString,
+            _ => RedisValueRef::NullBulkString,
+        },
+        None => RedisValueRef::NullBulkString,
     }
 }
 
@@ -240,8 +243,8 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn setup() -> Arc<RwLock<RedisDb>> {
-        Arc::new(RwLock::new(RedisDb::new()))
+    fn setup() -> Arc<RedisDb> {
+        Arc::new(RedisDb::new())
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
 use codecrafters_redis::{
@@ -10,7 +10,6 @@ use codecrafters_redis::{
 };
 use futures::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::RwLock;
 use tokio_util::codec::Decoder;
 
 async fn process(stream: TcpStream, db: Db) {

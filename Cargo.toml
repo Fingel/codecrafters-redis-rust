@@ -19,3 +19,11 @@ criterion = { version = "0.8.1", features = ["async_tokio"] }
 [[bench]]
 name = "list_operations"
 harness = false
+
+[lib]
+bench = false
+
+[[bin]]
+name = "codecrafters-redis"
+path = "src/main.rs"
+bench = false

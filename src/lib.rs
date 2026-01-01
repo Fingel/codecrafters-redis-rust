@@ -1,10 +1,9 @@
 use std::collections::HashMap; // TODO: try changing this to DashMap
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::parser::RedisValueRef;
 use bytes::Bytes;
-use tokio::sync::RwLock; // Todo: check performance of using regular RwLock
 
 pub mod interpreter;
 pub mod parser;
@@ -80,7 +79,7 @@ pub fn echo(arg: Bytes) -> RedisValueRef {
 }
 
 pub async fn set(db: &Db, key: Bytes, value: Bytes) -> RedisValueRef {
-    let mut db = db.write().await;
+    let mut db = db.write().unwrap();
     db.dict.insert(
         String::from_utf8_lossy(&key).to_string(),
         RedisValue::String(value),
@@ -96,7 +95,7 @@ pub async fn set_ex(db: &Db, key: Bytes, value: Bytes, ttl: u64) -> RedisValueRe
         .as_millis() as u64)
         .saturating_add(ttl);
 
-    let mut db = db.write().await;
+    let mut db = db.write().unwrap();
     db.dict
         .insert(key_string.clone(), RedisValue::String(value));
     db.ttl.insert(key_string, expiry);
@@ -107,7 +106,7 @@ pub async fn get(db: &Db, key: Bytes) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
     // Check if expired with read lock
     let is_expired = {
-        let db_r = db.read().await;
+        let db_r = db.read().unwrap();
         if let Some(expiry) = db_r.ttl.get(&key_string) {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -121,14 +120,14 @@ pub async fn get(db: &Db, key: Bytes) -> RedisValueRef {
 
     // If expired, remove both entries using write lock
     if is_expired {
-        let mut db_w = db.write().await;
+        let mut db_w = db.write().unwrap();
         db_w.dict.remove(&key_string);
         db_w.ttl.remove(&key_string);
         return RedisValueRef::NullBulkString;
     }
 
     // If not expired, return value using read lock
-    let db_r = db.read().await;
+    let db_r = db.read().unwrap();
     match db_r.dict.get(&key_string) {
         Some(value) => value.into(),
         None => RedisValueRef::NullBulkString,
@@ -137,7 +136,7 @@ pub async fn get(db: &Db, key: Bytes) -> RedisValueRef {
 
 pub async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    let mut db = db.write().await;
+    let mut db = db.write().unwrap();
     match db.dict.get_mut(&key_string) {
         Some(RedisValue::List(list)) => {
             list.extend(value);
@@ -156,7 +155,7 @@ pub async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
 
 pub async fn lpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    let mut db = db.write().await;
+    let mut db = db.write().unwrap();
     match db.dict.get_mut(&key_string) {
         Some(RedisValue::List(list)) => {
             let mut reversed = value.clone();
@@ -177,7 +176,7 @@ pub async fn lpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
 
 pub async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    let db_r = db.read().await;
+    let db_r = db.read().unwrap();
     let bytes: Vec<Bytes> = match db_r.dict.get(&key_string) {
         Some(RedisValue::List(list)) => {
             let list_len = list.len() as i64;
@@ -211,7 +210,7 @@ pub async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef
 
 pub async fn llen(db: &Db, key: Bytes) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    let db_r = db.read().await;
+    let db_r = db.read().unwrap();
     match db_r.dict.get(&key_string) {
         Some(RedisValue::List(list)) => RedisValueRef::Int(list.len() as i64),
         _ => RedisValueRef::Int(0),
@@ -220,7 +219,7 @@ pub async fn llen(db: &Db, key: Bytes) -> RedisValueRef {
 
 pub async fn lpop(db: &Db, key: Bytes, num_elements: Option<u64>) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    let mut db_w = db.write().await;
+    let mut db_w = db.write().unwrap();
     match db_w.dict.get_mut(&key_string) {
         Some(RedisValue::List(list)) if !list.is_empty() => {
             // VecDeque should help here

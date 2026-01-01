@@ -1,8 +1,10 @@
 use bytes::Bytes;
 use codecrafters_redis::{Db, RedisDb, lpop, lpush, lrange, rpush};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use std::{hint::black_box, sync::Arc};
-use tokio::sync::RwLock;
+use std::{
+    hint::black_box,
+    sync::{Arc, RwLock},
+};
 
 fn create_db_with_size(rt: &tokio::runtime::Runtime, size: usize) -> Db {
     let db: Db = Arc::new(RwLock::new(RedisDb::new()));

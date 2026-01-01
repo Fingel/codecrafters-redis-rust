@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -57,6 +58,7 @@ impl TryFrom<RedisValueRef> for RedisValue {
 pub struct RedisDb {
     pub dict: DashMap<String, RedisValue>,
     pub ttl: DashMap<String, u64>,
+    pub waiters: DashMap<String, VecDeque<tokio::sync::mpsc::Sender<Bytes>>>,
 }
 
 impl RedisDb {
@@ -64,6 +66,7 @@ impl RedisDb {
         RedisDb {
             dict: DashMap::new(),
             ttl: DashMap::new(),
+            waiters: DashMap::new(),
         }
     }
 }
@@ -79,6 +82,7 @@ pub fn echo(arg: Bytes) -> RedisValueRef {
 }
 
 pub async fn set(db: &Db, key: Bytes, value: Bytes) -> RedisValueRef {
+    // TODO: why are we owning key here and in all other functions?
     db.dict.insert(
         String::from_utf8_lossy(&key).to_string(),
         RedisValue::String(value),
@@ -129,12 +133,42 @@ pub async fn get(db: &Db, key: Bytes) -> RedisValueRef {
     }
 }
 
+/// Pops n values where n is the number of waiters waiting
+/// and then notifies them with the value. Redis requires
+/// the ordering of waiters be left intact so this needs to
+/// be atomic.
+async fn notify_waiters(db: &Db, key: &str) {
+    let assignments = {
+        let mut values = Vec::new();
+        if let Some(mut list_entry) = db.dict.get_mut(key)
+            && let RedisValue::List(list) = &mut *list_entry
+            && let Some(waiters) = db.waiters.get(key)
+        {
+            // Pop min(waiters, list_items) elements
+            let count = waiters.len().min(list.len());
+            values = list.drain(0..count).collect();
+        }
+        values
+    };
+
+    // Send each waiter their value
+    if !assignments.is_empty()
+        && let Some(mut waiters) = db.waiters.get_mut(key)
+    {
+        for value in assignments {
+            if let Some(tx) = waiters.pop_front() {
+                let _ = tx.send(value).await;
+            }
+        }
+    }
+}
+
 pub async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    match db.dict.get_mut(&key_string) {
+    let result = match db.dict.get_mut(&key_string) {
         Some(mut entry) => match &mut *entry {
             RedisValue::List(list) => {
-                list.extend(value);
+                list.extend(value.clone());
                 RedisValueRef::Int(list.len() as i64)
             }
             RedisValue::String(_) => RedisValueRef::Error(Bytes::from(
@@ -143,15 +177,18 @@ pub async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
         },
         None => {
             let num_items = value.len() as i64;
-            db.dict.insert(key_string, RedisValue::List(value));
+            db.dict
+                .insert(key_string.clone(), RedisValue::List(value.clone()));
             RedisValueRef::Int(num_items)
         }
-    }
+    };
+    notify_waiters(db, &key_string).await;
+    result
 }
 
 pub async fn lpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    match db.dict.get_mut(&key_string) {
+    let result = match db.dict.get_mut(&key_string) {
         Some(mut entry) => match &mut *entry {
             RedisValue::List(list) => {
                 let mut reversed = value.clone();
@@ -165,10 +202,12 @@ pub async fn lpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
         },
         None => {
             let num_items = value.len() as i64;
-            db.dict.insert(key_string, RedisValue::List(value));
+            db.dict.insert(key_string.clone(), RedisValue::List(value));
             RedisValueRef::Int(num_items)
         }
-    }
+    };
+    notify_waiters(db, &key_string).await;
+    result
 }
 
 pub async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef {
@@ -220,21 +259,68 @@ pub async fn llen(db: &Db, key: Bytes) -> RedisValueRef {
 
 pub async fn lpop(db: &Db, key: Bytes, num_elements: Option<u64>) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    match db.dict.get_mut(&key_string) {
-        Some(mut entry) => match &mut *entry {
-            RedisValue::List(list) if !list.is_empty() => {
-                // VecDeque should help here
-                let num_elements = (num_elements.unwrap_or(1) as usize).min(list.len());
-                let ret: Vec<Bytes> = list.drain(0..num_elements).collect();
-                if ret.len() == 1 {
-                    RedisValueRef::String(ret[0].clone())
-                } else {
-                    RedisValueRef::Array(ret.into_iter().map(RedisValueRef::String).collect())
+
+    let result = {
+        match db.dict.get_mut(&key_string) {
+            Some(mut entry) => match &mut *entry {
+                RedisValue::List(list) if !list.is_empty() => {
+                    let num_elements = (num_elements.unwrap_or(1) as usize).min(list.len());
+                    let ret: Vec<Bytes> = list.drain(0..num_elements).collect();
+                    let is_now_empty = list.is_empty();
+
+                    let response = if ret.len() == 1 {
+                        RedisValueRef::String(ret[0].clone())
+                    } else {
+                        RedisValueRef::Array(ret.into_iter().map(RedisValueRef::String).collect())
+                    };
+
+                    Some((response, is_now_empty))
+                }
+                _ => None,
+            },
+            None => None,
+        }
+    }; // Dict get_mut guard dropped
+
+    // Handle the result and potentially remove the key
+    match result {
+        Some((response, true)) => {
+            db.dict.remove(&key_string);
+            response
+        }
+        Some((response, false)) => response,
+        None => RedisValueRef::NullBulkString,
+    }
+}
+
+// blocking lpop
+pub async fn blpop(db: &Db, key: Bytes, _timeout: Option<u64>) -> RedisValueRef {
+    let key_string = String::from_utf8_lossy(&key).to_string();
+    let exists = get(db, key.clone()).await;
+    match exists {
+        RedisValueRef::NullBulkString => {
+            let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+            match db.waiters.get_mut(&key_string) {
+                Some(mut waiters) => waiters.push_back(tx),
+                None => {
+                    let mut waiters = VecDeque::new();
+                    waiters.push_back(tx);
+                    db.waiters.insert(key_string, waiters);
                 }
             }
-            _ => RedisValueRef::NullBulkString,
-        },
-        None => RedisValueRef::NullBulkString,
+            let res = rx.recv().await;
+            match res {
+                Some(val) => RedisValueRef::Array(vec![
+                    RedisValueRef::String(key),
+                    RedisValueRef::String(val),
+                ]),
+                None => RedisValueRef::NullBulkString,
+            }
+        }
+        _ => {
+            let val = lpop(db, key.clone(), Some(1)).await;
+            RedisValueRef::Array(vec![RedisValueRef::String(key), val])
+        }
     }
 }
 

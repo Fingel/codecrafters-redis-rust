@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use codecrafters_redis::{
-    _type, Db, RedisDb, blpop, echo, get, llen, lpop, lpush, lrange, ping, rpush, set, set_ex,
-};
+use codecrafters_redis::{_type, Db, RedisDb, echo, get, lists, ping, set, set_ex};
 use codecrafters_redis::{
     interpreter::{RedisCommand, RedisInterpreter},
     parser::{RedisValueRef, RespParser},
@@ -44,12 +42,12 @@ async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Set(key, value) => set(db, key, value).await,
         RedisCommand::SetEx(key, value, ttl) => set_ex(db, key, value, ttl).await,
         RedisCommand::Get(key) => get(db, key).await,
-        RedisCommand::Rpush(key, value) => rpush(db, key, value).await,
-        RedisCommand::Lpush(key, value) => lpush(db, key, value).await,
-        RedisCommand::Lrange(key, start, stop) => lrange(db, key, start, stop).await,
-        RedisCommand::LLen(key) => llen(db, key).await,
-        RedisCommand::LPop(key, num_elements) => lpop(db, key, num_elements).await,
-        RedisCommand::BLPop(key, timeout) => blpop(db, key, timeout).await,
+        RedisCommand::Rpush(key, value) => lists::rpush(db, key, value).await,
+        RedisCommand::Lpush(key, value) => lists::lpush(db, key, value).await,
+        RedisCommand::Lrange(key, start, stop) => lists::lrange(db, key, start, stop).await,
+        RedisCommand::LLen(key) => lists::llen(db, key).await,
+        RedisCommand::LPop(key, num_elements) => lists::lpop(db, key, num_elements).await,
+        RedisCommand::BLPop(key, timeout) => lists::blpop(db, key, timeout).await,
         RedisCommand::Type(key) => _type(db, key).await,
     }
 }

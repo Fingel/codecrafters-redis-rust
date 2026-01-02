@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use codecrafters_redis::{Db, RedisDb, lpop, lpush, lrange, rpush};
+use codecrafters_redis::{Db, RedisDb, lists};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::{hint::black_box, sync::Arc};
 
@@ -9,7 +9,7 @@ fn create_db_with_size(rt: &tokio::runtime::Runtime, size: usize) -> Db {
         let items: Vec<Bytes> = (0..size)
             .map(|i| Bytes::from(format!("item{}", i)))
             .collect();
-        rt.block_on(rpush(&db, Bytes::from("bench_key"), items));
+        rt.block_on(lists::rpush(&db, Bytes::from("bench_key"), items));
     }
     db
 }
@@ -36,7 +36,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("rpush", list_size), &list_size, |b, _| {
             b.to_async(&rt).iter(|| async {
-                rpush(
+                lists::rpush(
                     black_box(db_rpush),
                     black_box(Bytes::from("bench_key")),
                     black_box(vec![Bytes::from("new_item")]),
@@ -49,7 +49,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("lpush", list_size), &list_size, |b, _| {
             b.to_async(&rt).iter(|| async {
-                lpush(
+                lists::lpush(
                     black_box(db_lpush),
                     black_box(Bytes::from("bench_key")),
                     black_box(vec![Bytes::from("new_item")]),
@@ -75,7 +75,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             b.to_async(&rt).iter(|| async {
                 let start = black_box((list_size / 2) as i64);
                 let end = black_box(start + 1);
-                lrange(
+                lists::lrange(
                     black_box(db_lrange),
                     black_box(Bytes::from("bench_key")),
                     start,
@@ -99,7 +99,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("lpop", list_size), &list_size, |b, _| {
             b.to_async(&rt).iter(|| async {
-                lpop(
+                lists::lpop(
                     black_box(db_lpop),
                     black_box(Bytes::from("bench_key")),
                     None,
@@ -113,7 +113,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             &list_size,
             |b, _| {
                 b.to_async(&rt).iter(|| async {
-                    lpop(
+                    lists::lpop(
                         black_box(db_lpop),
                         black_box(Bytes::from("bench_key")),
                         Some(100),

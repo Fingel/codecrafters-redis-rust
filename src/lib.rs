@@ -69,6 +69,50 @@ impl RedisDb {
             waiters: Arc::new(Mutex::new(HashMap::new())),
         }
     }
+
+    fn is_expired(&self, key: &str) -> bool {
+        if let Some(expiry) = self.ttl.get(key) {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            *expiry < now
+        } else {
+            false
+        }
+    }
+
+    fn remove_if_expired(&self, key: &str) -> bool {
+        if self.is_expired(key) {
+            self.dict.remove(key);
+            self.ttl.remove(key);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn get_if_valid(
+        &self,
+        key: &str,
+    ) -> Option<dashmap::mapref::one::Ref<'_, String, RedisValue>> {
+        if self.remove_if_expired(key) {
+            None
+        } else {
+            self.dict.get(key)
+        }
+    }
+
+    pub fn get_mut_if_valid(
+        &self,
+        key: &str,
+    ) -> Option<dashmap::mapref::one::RefMut<'_, String, RedisValue>> {
+        if self.remove_if_expired(key) {
+            None
+        } else {
+            self.dict.get_mut(key)
+        }
+    }
 }
 
 pub type Db = Arc<RedisDb>;
@@ -105,28 +149,8 @@ pub async fn set_ex(db: &Db, key: Bytes, value: Bytes, ttl: u64) -> RedisValueRe
 
 pub async fn get(db: &Db, key: Bytes) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    // Check if expired with read lock
-    let is_expired = {
-        if let Some(expiry) = db.ttl.get(&key_string) {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64;
-            *expiry < now
-        } else {
-            false
-        }
-    };
 
-    // If expired, remove both entries using write lock
-    if is_expired {
-        db.dict.remove(&key_string);
-        db.ttl.remove(&key_string);
-        return RedisValueRef::NullBulkString;
-    }
-
-    // If not expired, return value using read lock
-    match db.dict.get(&key_string) {
+    match db.get_if_valid(&key_string) {
         Some(value) => RedisValueRef::from(&*value),
         None => RedisValueRef::NullBulkString,
     }
@@ -232,7 +256,8 @@ pub async fn lpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
 
 pub async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    let bytes: Vec<Bytes> = match db.dict.get(&key_string) {
+
+    let bytes: Vec<Bytes> = match db.get_if_valid(&key_string) {
         Some(entry) => match &*entry {
             RedisValue::List(list) => {
                 let list_len = list.len() as i64;
@@ -270,7 +295,7 @@ pub async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef
 
 pub async fn llen(db: &Db, key: Bytes) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-    match db.dict.get(&key_string) {
+    match db.get_if_valid(&key_string) {
         Some(entry) => match &*entry {
             RedisValue::List(list) => RedisValueRef::Int(list.len() as i64),
             _ => RedisValueRef::Int(0),
@@ -281,9 +306,8 @@ pub async fn llen(db: &Db, key: Bytes) -> RedisValueRef {
 
 pub async fn lpop(db: &Db, key: Bytes, num_elements: Option<u64>) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
-
     let result = {
-        match db.dict.get_mut(&key_string) {
+        match db.get_mut_if_valid(&key_string) {
             Some(mut entry) => match &mut *entry {
                 RedisValue::List(list) if !list.is_empty() => {
                     let num_elements = (num_elements.unwrap_or(1) as usize).min(list.len());

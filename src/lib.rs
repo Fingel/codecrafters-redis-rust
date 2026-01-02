@@ -9,15 +9,24 @@ use dashmap::DashMap;
 pub mod interpreter;
 pub mod lists;
 pub mod parser;
+pub mod streams;
 
 // Storage Type
 #[derive(Debug, Clone, PartialEq)]
 pub enum RedisValue {
     String(Bytes),
     List(VecDeque<Bytes>),
+    Stream(Vec<Stream>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stream {
+    id: Bytes,
+    fields: Vec<(Bytes, Bytes)>,
 }
 
 /// Convert from storage format to wire protocol format
+// TODO maybe get rid of these and make it explcit I think this is barely used anyway
 impl From<&RedisValue> for RedisValueRef {
     fn from(value: &RedisValue) -> Self {
         match value {
@@ -26,6 +35,13 @@ impl From<&RedisValue> for RedisValueRef {
                 items
                     .iter()
                     .map(|item| RedisValueRef::String(item.clone()))
+                    .collect(),
+            ),
+            RedisValue::Stream(items) => RedisValueRef::Array(
+                // TODO no idea how this should be structured
+                items
+                    .iter()
+                    .map(|item| RedisValueRef::String(item.id.clone()))
                     .collect(),
             ),
         }
@@ -158,16 +174,16 @@ pub async fn get(db: &Db, key: Bytes) -> RedisValueRef {
 }
 
 pub async fn _type(db: &Db, key: Bytes) -> RedisValueRef {
-    let val = get(db, key).await;
-    let ret = match val {
-        RedisValueRef::String(_) | RedisValueRef::SimpleString(_) => "string",
-        RedisValueRef::Int(_) => "integer",
-        RedisValueRef::Array(_) | RedisValueRef::NullArray => "list",
-        RedisValueRef::Error(_) | RedisValueRef::NullBulkString | RedisValueRef::ErrorMsg(_) => {
-            "none"
-        }
+    let key_string = String::from_utf8_lossy(&key).to_string();
+    let result = match db.get_if_valid(&key_string) {
+        Some(entry) => match *entry {
+            RedisValue::String(_) => "string",
+            RedisValue::List(_) => "list",
+            RedisValue::Stream(_) => "stream",
+        },
+        None => "none",
     };
-    RedisValueRef::SimpleString(Bytes::from(ret))
+    RedisValueRef::SimpleString(Bytes::from(result))
 }
 
 #[cfg(test)]

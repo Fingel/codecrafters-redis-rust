@@ -55,7 +55,7 @@ pub async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
                 list.extend(value.clone());
                 RedisValueRef::Int(list.len() as i64)
             }
-            RedisValue::String(_) => RedisValueRef::Error(Bytes::from(
+            _ => RedisValueRef::Error(Bytes::from(
                 "Attempted to push to an array of the wrong type",
             )),
         },
@@ -80,7 +80,7 @@ pub async fn lpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
                 }
                 RedisValueRef::Int(list.len() as i64)
             }
-            RedisValue::String(_) => RedisValueRef::Error(Bytes::from(
+            _ => RedisValueRef::Error(Bytes::from(
                 "Attempted to push to an array of the wrong type",
             )),
         },

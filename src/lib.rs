@@ -13,7 +13,7 @@ pub mod parser;
 #[derive(Debug, Clone, PartialEq)]
 pub enum RedisValue {
     String(Bytes),
-    List(Vec<Bytes>), // TODO: use a VecDeque for better performance on front operations
+    List(VecDeque<Bytes>),
 }
 
 /// Convert from storage format to wire protocol format
@@ -40,10 +40,10 @@ impl TryFrom<RedisValueRef> for RedisValue {
             RedisValueRef::String(s) => Ok(RedisValue::String(s)),
             RedisValueRef::Array(items) => {
                 // Convert array of RedisValueRef to List of Bytes
-                let mut bytes_vec = Vec::new();
+                let mut bytes_vec = VecDeque::new();
                 for item in items {
                     match item {
-                        RedisValueRef::String(s) => bytes_vec.push(s),
+                        RedisValueRef::String(s) => bytes_vec.push_back(s),
                         _ => return Err("List can only contain strings".to_string()),
                     }
                 }
@@ -180,7 +180,7 @@ pub async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
         None => {
             let num_items = value.len() as i64;
             db.dict
-                .insert(key_string.clone(), RedisValue::List(value.clone()));
+                .insert(key_string.clone(), RedisValue::List(value.into()));
             RedisValueRef::Int(num_items)
         }
     };
@@ -193,9 +193,9 @@ pub async fn lpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
     let result = match db.dict.get_mut(&key_string) {
         Some(mut entry) => match &mut *entry {
             RedisValue::List(list) => {
-                let mut reversed = value.clone();
-                reversed.reverse();
-                list.splice(0..0, reversed);
+                for item in value.into_iter() {
+                    list.push_front(item);
+                }
                 RedisValueRef::Int(list.len() as i64)
             }
             RedisValue::String(_) => RedisValueRef::Error(Bytes::from(
@@ -204,7 +204,8 @@ pub async fn lpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
         },
         None => {
             let num_items = value.len() as i64;
-            db.dict.insert(key_string.clone(), RedisValue::List(value));
+            db.dict
+                .insert(key_string.clone(), RedisValue::List(value.into()));
             RedisValueRef::Int(num_items)
         }
     };
@@ -237,7 +238,9 @@ pub async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef
                 if start >= list_len || start > stop {
                     vec![]
                 } else {
-                    list[start as usize..=stop as usize].to_vec()
+                    list.range(start as usize..=stop as usize)
+                        .cloned()
+                        .collect()
                 }
             }
             _ => vec![],
@@ -667,7 +670,8 @@ mod tests {
         assert_eq!(protocol, RedisValueRef::String(Bytes::from("hello")));
 
         // Test with list
-        let stored_list = RedisValue::List(vec![Bytes::from("a"), Bytes::from("b")]);
+        let stored_list =
+            RedisValue::List(VecDeque::from(vec![Bytes::from("a"), Bytes::from("b")]));
         let protocol: RedisValueRef = (&stored_list).into();
         match protocol {
             RedisValueRef::Array(items) => assert_eq!(items.len(), 2),

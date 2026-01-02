@@ -26,7 +26,6 @@ pub struct Stream {
 }
 
 /// Convert from storage format to wire protocol format
-// TODO maybe get rid of these and make it explcit I think this is barely used anyway
 impl From<&RedisValue> for RedisValueRef {
     fn from(value: &RedisValue) -> Self {
         match value {
@@ -37,36 +36,7 @@ impl From<&RedisValue> for RedisValueRef {
                     .map(|item| RedisValueRef::String(item.clone()))
                     .collect(),
             ),
-            RedisValue::Stream(items) => RedisValueRef::Array(
-                // TODO no idea how this should be structured
-                items
-                    .iter()
-                    .map(|item| RedisValueRef::String(item.id.clone()))
-                    .collect(),
-            ),
-        }
-    }
-}
-
-/// Convert from wire protocol format to storage format
-impl TryFrom<RedisValueRef> for RedisValue {
-    type Error = String;
-
-    fn try_from(value: RedisValueRef) -> Result<Self, Self::Error> {
-        match value {
-            RedisValueRef::String(s) => Ok(RedisValue::String(s)),
-            RedisValueRef::Array(items) => {
-                // Convert array of RedisValueRef to List of Bytes
-                let mut bytes_vec = VecDeque::new();
-                for item in items {
-                    match item {
-                        RedisValueRef::String(s) => bytes_vec.push_back(s),
-                        _ => return Err("List can only contain strings".to_string()),
-                    }
-                }
-                Ok(RedisValue::List(bytes_vec))
-            }
-            _ => Err("Cannot convert this RedisValueRef to storage format".to_string()),
+            _ => RedisValueRef::Error(Bytes::from("Not implemented")),
         }
     }
 }
@@ -250,8 +220,6 @@ mod tests {
 
     #[test]
     fn test_redis_value_trait_conversions() {
-        use std::convert::TryInto;
-
         // Test From<&RedisValue> for RedisValueRef
         let stored_string = RedisValue::String(Bytes::from("hello"));
         let protocol: RedisValueRef = (&stored_string).into();
@@ -265,17 +233,6 @@ mod tests {
             RedisValueRef::Array(items) => assert_eq!(items.len(), 2),
             _ => panic!("Expected array"),
         }
-
-        // Test TryFrom<RedisValueRef> for RedisValue
-        let protocol_string = RedisValueRef::String(Bytes::from("world"));
-        let stored: Result<RedisValue, _> = protocol_string.try_into();
-        assert!(stored.is_ok());
-        assert_eq!(stored.unwrap(), RedisValue::String(Bytes::from("world")));
-
-        // Test that invalid conversions fail
-        let protocol_error = RedisValueRef::Error(Bytes::from("ERR"));
-        let stored: Result<RedisValue, _> = protocol_error.try_into();
-        assert!(stored.is_err());
     }
 
     #[test]

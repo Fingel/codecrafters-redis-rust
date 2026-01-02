@@ -161,9 +161,10 @@ pub async fn get(db: &Db, key: Bytes) -> RedisValueRef {
 /// the ordering of waiters be left intact so this needs to
 /// be atomic.
 async fn notify_waiters(db: &Db, key: &str) {
-    let assignments = {
+    let (assignments, is_now_empty) = {
         let mut assignments = Vec::new();
         let mut waiters_guard = db.waiters.lock().unwrap();
+        let mut is_now_empty = false;
 
         if let Some(mut list_entry) = db.dict.get_mut(key)
             && let RedisValue::List(list) = &mut *list_entry
@@ -182,9 +183,10 @@ async fn notify_waiters(db: &Db, key: &str) {
                     list.push_front(value);
                 }
             }
+            is_now_empty = list.is_empty();
         }
 
-        assignments
+        (assignments, is_now_empty)
     };
 
     // Send each waiter their value
@@ -192,16 +194,7 @@ async fn notify_waiters(db: &Db, key: &str) {
         let _ = tx.send(value);
     }
 
-    // Clean up empty list
-    let is_empty = if let Some(list_entry) = db.dict.get(key)
-        && let RedisValue::List(list) = &*list_entry
-    {
-        list.is_empty()
-    } else {
-        false
-    };
-
-    if is_empty {
+    if is_now_empty {
         db.dict.remove(key);
     }
 }

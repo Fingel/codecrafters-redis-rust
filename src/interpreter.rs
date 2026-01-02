@@ -16,6 +16,7 @@ pub enum RedisCommand {
     LLen(Bytes),
     LPop(Bytes, Option<u64>),
     BLPop(Bytes, Option<f64>),
+    Type(Bytes),
 }
 
 #[derive(Debug, Error)]
@@ -105,6 +106,7 @@ impl RedisInterpreter {
                     "LLEN" => self.llen(&args),
                     "LPOP" => self.lpop(&args),
                     "BLPOP" => self.blpop(&args),
+                    "TYPE" => self._type(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -226,6 +228,15 @@ impl RedisInterpreter {
                 .map(|timeout| extract_f64_arg(timeout, "timeout"))
                 .transpose()
                 .map(|timeout| RedisCommand::BLPop(key, timeout))
+        }
+    }
+
+    fn _type(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+        if args.len() != 2 {
+            Err(CmdError::InvalidArgumentNum)
+        } else {
+            let key = extract_string_arg(&args[1], "key")?;
+            Ok(RedisCommand::Type(key))
         }
     }
 }

@@ -333,6 +333,19 @@ pub async fn blpop(db: &Db, key: Bytes, timeout: Option<f64>) -> RedisValueRef {
     }
 }
 
+pub async fn _type(db: &Db, key: Bytes) -> RedisValueRef {
+    let val = get(db, key).await;
+    let ret = match val {
+        RedisValueRef::String(_) | RedisValueRef::SimpleString(_) => "string",
+        RedisValueRef::Int(_) => "integer",
+        RedisValueRef::Array(_) | RedisValueRef::NullArray => "list",
+        RedisValueRef::Error(_) | RedisValueRef::NullBulkString | RedisValueRef::ErrorMsg(_) => {
+            "none"
+        }
+    };
+    RedisValueRef::SimpleString(Bytes::from(ret))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,6 +671,22 @@ mod tests {
             }
             _ => panic!("Expected array result"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_type() {
+        let db = setup();
+        let key = Bytes::from("test_key");
+        let value = Bytes::from("test_value");
+
+        let result = set(&db, key.clone(), value.clone()).await;
+        assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
+
+        let result = _type(&db, key).await;
+        assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("string")));
+
+        let result = _type(&db, Bytes::from("notexist")).await;
+        assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("none")));
     }
 
     #[test]

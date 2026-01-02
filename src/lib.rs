@@ -138,30 +138,47 @@ pub async fn get(db: &Db, key: Bytes) -> RedisValueRef {
 /// be atomic.
 async fn notify_waiters(db: &Db, key: &str) {
     let assignments = {
-        let mut values = Vec::new();
+        let mut assignments = Vec::new();
+        let mut waiters_guard = db.waiters.lock().unwrap();
+
         if let Some(mut list_entry) = db.dict.get_mut(key)
             && let RedisValue::List(list) = &mut *list_entry
+            && let Some(waiter_queue) = waiters_guard.get_mut(key)
         {
-            let waiters = db.waiters.lock().unwrap();
-            if let Some(waiter_queue) = waiters.get(key) {
-                // Pop min(waiters, list_items) elements
-                let count = waiter_queue.len().min(list.len());
-                values = list.drain(0..count).collect();
-            }
-        }
-        values
-    };
+            // Keep trying to pair values with live waiters
+            while !list.is_empty() && !waiter_queue.is_empty() {
+                let value = list.pop_front().unwrap();
+                let tx = waiter_queue.pop_front().unwrap();
 
-    // Send each waiter their value
-    if !assignments.is_empty() {
-        let mut waiters = db.waiters.lock().unwrap();
-        if let Some(waiter_queue) = waiters.get_mut(key) {
-            for value in assignments {
-                if let Some(tx) = waiter_queue.pop_front() {
-                    let _ = tx.send(value);
+                if !tx.is_closed() {
+                    // Waiter is still alive, pair them
+                    assignments.push((tx, value));
+                } else {
+                    // Waiter timed out, put value back and try next waiter
+                    list.push_front(value);
                 }
             }
         }
+
+        assignments
+    };
+
+    // Send each waiter their value
+    for (tx, value) in assignments {
+        let _ = tx.send(value);
+    }
+
+    // Clean up empty list
+    let is_empty = if let Some(list_entry) = db.dict.get(key)
+        && let RedisValue::List(list) = &*list_entry
+    {
+        list.is_empty()
+    } else {
+        false
+    };
+
+    if is_empty {
+        db.dict.remove(key);
     }
 }
 

@@ -1,34 +1,38 @@
-[![progress-banner](https://backend.codecrafters.io/progress/redis/600b0053-7b6d-4542-a557-81d57b0f76d5)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+# A Redis Implementation in Rust
 
-This is a starting point for Rust solutions to the
-["Build Your Own Redis" Challenge](https://codecrafters.io/challenges/redis).
+This is an implementation of the Redis server written in Rust
+with a few notable properties. This is purely an intellectual
+endeavour, not for production use.
 
-In this challenge, you'll build a toy Redis clone that's capable of handling
-basic commands like `PING`, `SET` and `GET`. Along the way we'll learn about
-event loops, the Redis protocol and more.
+## Architecture
+Unlike the official Redis server this implementation is multi-threaded.
+Each client command runs on it's own Tokio task. In theory this means
+better multi-core utilization in the case of many concurrent commands.
+In reality it probably means worse performance due to synchronization
+overhead.
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+To lessen the impact of resource coordination, the main data-store
+uses [dashmap](https://github.com/xacrimon/dashmap) which means
+that in some cases, multiple commands can read/write to the db
+with true parallelism.
 
-# Passing the first stage
+It would be interesting to see under which workloads the
+multi-threaded implementation actually comes out ahead. For
+now I'm writing it this way to get better at writing async
+Rust.
 
-The entry point for your Redis implementation is in `src/main.rs`. Study and
-uncomment the relevant code, and push your changes to pass the first stage:
-
-```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
-```
-
-That's all!
-
-# Stage 2 & beyond
-
-Note: This section is for stages 2 and beyond.
-
-1. Ensure you have `cargo (1.91)` installed locally
-1. Run `./your_program.sh` to run your Redis server, which is implemented in
-   `src/main.rs`. This command compiles your Rust project, so it might be slow
-   the first time you run it. Subsequent runs will be fast.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+## Commands
+So far there is support for:
+* Ping
+* Echo
+* Set
+* SetEx
+* Get
+* Rpush
+* Lpush
+* Lrange
+* LLen
+* LPop
+* BLPop
+* Type
+* XAdd

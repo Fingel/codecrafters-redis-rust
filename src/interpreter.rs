@@ -17,10 +17,10 @@ pub enum RedisCommand {
     LPop(Bytes, Option<u64>),
     BLPop(Bytes, Option<f64>),
     Type(Bytes),
-    XAdd(Bytes, Bytes, Vec<(Bytes, Bytes)>),
+    XAdd(Bytes, Option<u64>, Option<u64>, Vec<(Bytes, Bytes)>),
 }
 
-#[derive(Debug, Error, PartialEq)]
+#[derive(Debug, Error, PartialEq, Clone)]
 pub enum CmdError {
     #[error("commands must start with a string")]
     InvalidCommandType,
@@ -242,12 +242,37 @@ impl RedisInterpreter {
         }
     }
 
+    fn parse_stream_id(&self, id: &str) -> Result<(Option<u64>, Option<u64>), CmdError> {
+        if id == "*" {
+            return Ok((None, None));
+        }
+        let parts: Vec<&str> = id.split('-').collect();
+        let err = CmdError::InvalidArgument("id".into());
+        if parts.len() != 2 {
+            return Err(err);
+        }
+        let time = if parts[0] == "*" {
+            None
+        } else {
+            Some(parts[0].parse().map_err(|_| err.clone())?)
+        };
+
+        let seq = if parts[1] == "*" {
+            None
+        } else {
+            Some(parts[1].parse().map_err(|_| err.clone())?)
+        };
+
+        Ok((time, seq))
+    }
+
     fn xadd(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         if args.len() < 5 {
             Err(CmdError::InvalidArgumentNum)
         } else {
             let key = extract_string_arg(&args[1], "key")?;
-            let id = extract_string_arg(&args[2], "id")?;
+            let id = extract_lossy_string_arg(&args[2], "id")?;
+            let (time, seq) = self.parse_stream_id(&id)?;
             let fields = args[3..]
                 .chunks_exact(2)
                 .map(|chunk| {
@@ -256,7 +281,7 @@ impl RedisInterpreter {
                     Ok((field, value))
                 })
                 .collect::<Result<Vec<(Bytes, Bytes)>, CmdError>>()?;
-            Ok(RedisCommand::XAdd(key, id, fields))
+            Ok(RedisCommand::XAdd(key, time, seq, fields))
         }
     }
 }
@@ -299,7 +324,7 @@ mod tests {
             .interpret(RedisValueRef::Array(vec![
                 RedisValueRef::String(Bytes::from("XADD")),
                 RedisValueRef::String(Bytes::from("key")),
-                RedisValueRef::String(Bytes::from("id")),
+                RedisValueRef::String(Bytes::from("0-1")),
                 RedisValueRef::String(Bytes::from("field1")),
                 RedisValueRef::String(Bytes::from("value1")),
                 RedisValueRef::String(Bytes::from("field2")),
@@ -312,7 +337,8 @@ mod tests {
             command,
             RedisCommand::XAdd(
                 Bytes::from("key"),
-                Bytes::from("id"),
+                Some(0),
+                Some(1),
                 vec![
                     (Bytes::from("field1"), Bytes::from("value1")),
                     (Bytes::from("field2"), Bytes::from("value2"))
@@ -328,12 +354,29 @@ mod tests {
             .interpret(RedisValueRef::Array(vec![
                 RedisValueRef::String(Bytes::from("XADD")),
                 RedisValueRef::String(Bytes::from("key")),
-                RedisValueRef::String(Bytes::from("id")),
+                RedisValueRef::String(Bytes::from("0-1")),
                 RedisValueRef::String(Bytes::from("field1")), // no value
             ]))
             .err()
             .unwrap();
 
         assert_eq!(command, CmdError::InvalidArgumentNum);
+    }
+
+    #[test]
+    fn test_xadd_bad_id() {
+        let interpreter = RedisInterpreter::new();
+        let command = interpreter
+            .interpret(RedisValueRef::Array(vec![
+                RedisValueRef::String(Bytes::from("XADD")),
+                RedisValueRef::String(Bytes::from("key")),
+                RedisValueRef::String(Bytes::from("1-asdf")),
+                RedisValueRef::String(Bytes::from("field1")),
+                RedisValueRef::String(Bytes::from("value1")),
+            ]))
+            .err()
+            .unwrap();
+
+        assert_eq!(command, CmdError::InvalidArgument("id".into()));
     }
 }

@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::parser::RedisValueRef;
+use crate::streams::RedisStream;
 use bytes::Bytes;
 use dashmap::DashMap;
 
@@ -16,13 +17,7 @@ pub mod streams;
 pub enum RedisValue {
     String(Bytes),
     List(VecDeque<Bytes>),
-    Stream(Vec<Stream>),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Stream {
-    id: Bytes,
-    fields: Vec<(Bytes, Bytes)>,
+    Stream(RedisStream),
 }
 
 /// Convert from storage format to wire protocol format

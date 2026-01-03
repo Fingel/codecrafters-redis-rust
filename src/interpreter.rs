@@ -18,7 +18,11 @@ pub enum RedisCommand {
     BLPop(Bytes, Option<f64>),
     Type(Bytes),
     XAdd(Bytes, (Option<u64>, Option<u64>), Vec<(Bytes, Bytes)>),
-    XRange(Bytes, (u64, Option<u64>), (u64, Option<u64>)),
+    XRange(
+        Bytes,
+        (Option<u64>, Option<u64>),
+        (Option<u64>, Option<u64>),
+    ),
 }
 
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -245,7 +249,7 @@ impl RedisInterpreter {
     }
 
     fn parse_stream_id(&self, id: &str) -> Result<(Option<u64>, Option<u64>), CmdError> {
-        if id == "*" {
+        if id == "*" || id == "-" || id == "+" {
             return Ok((None, None));
         }
         let parts: Vec<&str> = id.split('-').collect();
@@ -295,17 +299,8 @@ impl RedisInterpreter {
             let start = extract_lossy_string_arg(&args[2], "start")?;
             let end = extract_lossy_string_arg(&args[3], "end")?;
             let start_parsed = self.parse_stream_id(&start)?;
-            // MS is required for xrange
-            let start_ms = start_parsed
-                .0
-                .ok_or_else(|| CmdError::InvalidArgument("start".into()))?;
             let end_parsed = self.parse_stream_id(&end)?;
-            let end_ms = end_parsed
-                .0
-                .ok_or_else(|| CmdError::InvalidArgument("end".into()))?;
-            let start_tuple = (start_ms, start_parsed.1);
-            let end_tuple = (end_ms, end_parsed.1);
-            Ok(RedisCommand::XRange(key, start_tuple, end_tuple))
+            Ok(RedisCommand::XRange(key, start_parsed, end_parsed))
         }
     }
 }
@@ -417,7 +412,7 @@ mod tests {
 
         assert_eq!(
             command,
-            RedisCommand::XRange(Bytes::from("key"), (1, Some(0)), (2, Some(0)),)
+            RedisCommand::XRange(Bytes::from("key"), (Some(1), Some(0)), (Some(2), Some(0)),)
         );
     }
 }

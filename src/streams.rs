@@ -138,8 +138,8 @@ pub async fn xadd(
 pub async fn xrange(
     db: &Db,
     key: Bytes,
-    start: (u64, Option<u64>),
-    stop: (u64, Option<u64>),
+    start: (Option<u64>, Option<u64>),
+    stop: (Option<u64>, Option<u64>),
 ) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
     let (start_ms, start_seq) = start;
@@ -148,11 +148,11 @@ pub async fn xrange(
         Some(entry) => match &*entry {
             RedisValue::Stream(stream) => {
                 let start = StreamId {
-                    ms: start_ms,
+                    ms: start_ms.unwrap_or(0),
                     seq: start_seq.unwrap_or(0),
                 };
                 let stop = StreamId {
-                    ms: stop_ms,
+                    ms: stop_ms.unwrap_or(u64::MAX),
                     seq: stop_seq.unwrap_or(u64::MAX),
                 };
 
@@ -356,7 +356,7 @@ mod tests {
         let key = Bytes::from("test_stream");
         let entries = vec![
             (
-                1,
+                Some(1),
                 Some(0),
                 vec![
                     (Bytes::from("1-0-field1"), Bytes::from("1-0value1")),
@@ -364,7 +364,7 @@ mod tests {
                 ],
             ),
             (
-                2,
+                Some(2),
                 Some(0),
                 vec![
                     (Bytes::from("2-0-field1"), Bytes::from("2-0value1")),
@@ -372,7 +372,7 @@ mod tests {
                 ],
             ),
             (
-                2,
+                Some(2),
                 Some(2),
                 vec![
                     (Bytes::from("2-2-field1"), Bytes::from("2-2value1")),
@@ -381,10 +381,10 @@ mod tests {
             ),
         ];
         for entry in entries {
-            xadd(&db, key.clone(), (Some(entry.0), entry.1), entry.2).await;
+            xadd(&db, key.clone(), (entry.0, entry.1), entry.2).await;
         }
 
-        let result = xrange(&db, key.clone(), (0, Some(0)), (2, Some(2))).await;
+        let result = xrange(&db, key.clone(), (Some(0), Some(0)), (Some(2), Some(2))).await;
         assert_eq!(
             result,
             RedisValueRef::Array(vec![
@@ -418,7 +418,7 @@ mod tests {
             ])
         );
 
-        let result = xrange(&db, key.clone(), (0, Some(0)), (2, Some(1))).await;
+        let result = xrange(&db, key.clone(), (Some(0), Some(0)), (Some(2), Some(1))).await;
         assert_eq!(
             result,
             RedisValueRef::Array(vec![
@@ -443,7 +443,7 @@ mod tests {
             ])
         );
 
-        let result = xrange(&db, key.clone(), (0, None), (2, None)).await;
+        let result = xrange(&db, key.clone(), (None, None), (None, None)).await;
         assert_eq!(
             result,
             RedisValueRef::Array(vec![

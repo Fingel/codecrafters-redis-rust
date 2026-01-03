@@ -45,16 +45,26 @@ impl Ord for StreamId {
 
 impl StreamId {
     pub fn new(ms: Option<u64>, seq: Option<u64>) -> Self {
-        Self {
-            ms: ms.unwrap_or(
-                SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64,
-            ),
-            seq: seq.unwrap_or(1).max(1), // cannot be 0 TODO enforce this at type level
-        }
+        let ms = ms.unwrap_or(
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+        );
+        // Shit special case where seq 0 is only invalid if ms is also 0
+        let seq = match seq {
+            None => {
+                if ms == 0 {
+                    1
+                } else {
+                    0
+                }
+            }
+            Some(seq) => seq,
+        };
+        Self { ms, seq }
     }
+
     pub fn to_bytes(&self) -> Bytes {
         Bytes::from(format!("{}-{}", self.ms, self.seq))
     }
@@ -153,11 +163,34 @@ mod tests {
     }
 
     #[test]
+    fn test_stream_id_new() {
+        let id1 = StreamId::new(None, None);
+        assert!(id1.ms > 1000); // jank, this is a new timestamp
+        assert_eq!(id1.seq, 0);
+
+        let id2 = StreamId::new(None, Some(1));
+        assert!(id2.ms > 1000); // jank, this is a new timestamp
+        assert_eq!(id2.seq, 1);
+
+        let id3 = StreamId::new(Some(1), None);
+        assert_eq!(id3.ms, 1);
+        assert_eq!(id3.seq, 0);
+
+        let id4 = StreamId::new(Some(1), Some(2));
+        assert_eq!(id4.ms, 1);
+        assert_eq!(id4.seq, 2);
+
+        let id4 = StreamId::new(Some(0), None);
+        assert_eq!(id4.ms, 0);
+        assert_eq!(id4.seq, 1);
+    }
+
+    #[test]
     fn test_compute_stream_full_auto() {
         let last_id = StreamId { ms: 0, seq: 1 };
         let computed_id = compute_stream_id(None, None, &last_id);
         assert!(computed_id.ms > 1000); // jank, this is a new timestamp
-        assert_eq!(computed_id.seq, 1);
+        assert_eq!(computed_id.seq, 0);
     }
 
     #[test]

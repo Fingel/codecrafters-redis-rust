@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, time::SystemTime};
 
 use bytes::Bytes;
 
-use crate::{Db, RedisValue, parser::RedisValueRef};
+use crate::{Db, RedisValue, parser::RedisValueRef, ref_error};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RedisStream(BTreeMap<StreamId, StreamData>);
@@ -68,30 +68,17 @@ impl Default for StreamId {
 
 type StreamData = Vec<(Bytes, Bytes)>;
 
-fn compute_stream_id(
-    ms: Option<u64>,
-    seq: Option<u64>,
-    last_stream: Option<(&StreamId, &StreamData)>,
-) -> Result<StreamId, String> {
-    match last_stream {
-        Some((k, _)) => {
-            let new_stream_id = match ms {
-                None => StreamId::new(None, None), // *
-                Some(ms) => {
-                    // 1234546-
-                    if ms == k.ms {
-                        StreamId::new(Some(ms), Some(seq.unwrap_or(k.seq + 1))) // Add one to the seq of the same ms
-                    } else {
-                        StreamId::new(Some(ms), seq) // new timestamp, use supplied seq or 1
-                    }
-                }
-            };
-            if &new_stream_id <= k {
-                return Err("ERR The ID specified in XADD is equal or smaller than the target stream top item".to_string());
+fn compute_stream_id(ms: Option<u64>, seq: Option<u64>, last_stream: &StreamId) -> StreamId {
+    match ms {
+        None => StreamId::new(None, None), // *
+        Some(ms) => {
+            // 1234546-
+            if ms == last_stream.ms {
+                StreamId::new(Some(ms), Some(seq.unwrap_or(last_stream.seq + 1))) // Add one to the seq of the same ms
+            } else {
+                StreamId::new(Some(ms), seq) // new timestamp, use supplied seq or 1
             }
-            Ok(new_stream_id)
         }
-        None => Ok(StreamId::new(ms, seq)),
     }
 }
 
@@ -103,24 +90,30 @@ pub async fn xadd(
     fields: Vec<(Bytes, Bytes)>,
 ) -> RedisValueRef {
     if ms == Some(0) && seq == Some(0) {
-        return RedisValueRef::Error(Bytes::from(
-            "ERR The ID specified in XADD must be greater than 0-0".to_string(),
-        ));
+        return ref_error("ERR The ID specified in XADD must be greater than 0-0");
     }
     let key_string = String::from_utf8_lossy(&key).to_string();
     match db.get_mut_if_valid(&key_string) {
         Some(mut entry) => match &mut *entry {
             RedisValue::Stream(existing_stream) => {
-                let last_stream_entry = existing_stream.0.last_key_value();
-                let stream_id = match compute_stream_id(ms, seq, last_stream_entry) {
-                    Ok(id) => id,
-                    Err(err) => return RedisValueRef::Error(Bytes::from(err)),
+                let stream_id = match existing_stream.0.last_key_value() {
+                    Some((last_id, _)) => {
+                        let new_id = compute_stream_id(ms, seq, last_id);
+                        if &new_id <= last_id {
+                            return ref_error(
+                                "ERR The ID specified in XADD is equal or smaller than the target stream top item",
+                            );
+                        } else {
+                            new_id
+                        }
+                    }
+                    None => StreamId::new(ms, seq),
                 };
                 existing_stream.insert(stream_id.clone(), fields);
 
                 RedisValueRef::String(stream_id.to_bytes())
             }
-            _ => RedisValueRef::Error(Bytes::from("Attempted add to non-stream value")),
+            _ => ref_error("Attempted add to non-stream value"),
         },
         None => {
             let mut new_map = RedisStream::new();
@@ -162,8 +155,7 @@ mod tests {
     #[test]
     fn test_compute_stream_full_auto() {
         let last_id = StreamId { ms: 0, seq: 1 };
-        let last_stream = Some((&last_id, &vec![]));
-        let computed_id = compute_stream_id(None, None, last_stream).unwrap();
+        let computed_id = compute_stream_id(None, None, &last_id);
         assert!(computed_id.ms > 1000); // jank, this is a new timestamp
         assert_eq!(computed_id.seq, 1);
     }
@@ -171,8 +163,7 @@ mod tests {
     #[test]
     fn test_compute_stream_auto_seq() {
         let last_id = StreamId { ms: 0, seq: 1 };
-        let last_stream = Some((&last_id, &vec![]));
-        let computed_id = compute_stream_id(Some(0), None, last_stream).unwrap();
+        let computed_id = compute_stream_id(Some(0), None, &last_id);
         assert_eq!(computed_id.ms, 0);
         assert_eq!(computed_id.seq, 2);
     }
@@ -180,24 +171,9 @@ mod tests {
     #[test]
     fn test_compute_stream_no_auto() {
         let last_id = StreamId { ms: 0, seq: 1 };
-        let last_stream = Some((&last_id, &vec![]));
-        let computed_id = compute_stream_id(Some(5), Some(5), last_stream).unwrap();
+        let computed_id = compute_stream_id(Some(5), Some(5), &last_id);
         assert_eq!(computed_id.ms, 5);
         assert_eq!(computed_id.seq, 5);
-    }
-
-    #[test]
-    fn test_compute_stream_less_ms() {
-        let last_id = StreamId { ms: 1, seq: 1 };
-        let last_stream = Some((&last_id, &vec![]));
-        assert!(compute_stream_id(Some(0), None, last_stream).is_err());
-    }
-
-    #[test]
-    fn test_compute_stream_less_seq() {
-        let last_id = StreamId { ms: 1, seq: 1 };
-        let last_stream = Some((&last_id, &vec![]));
-        assert!(compute_stream_id(Some(1), Some(0), last_stream).is_err());
     }
 
     #[tokio::test]
@@ -258,9 +234,38 @@ mod tests {
         let result = xadd(&db, key.clone(), time, seq, fields.clone()).await;
         assert_eq!(
             result,
-            RedisValueRef::Error(
+            ref_error(
                 "ERR The ID specified in XADD is equal or smaller than the target stream top item"
-                    .into()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn test_xadd_less() {
+        let db = setup();
+        let key = Bytes::from("test_stream");
+        let time = Some(2);
+        let seq = Some(2);
+        let fields = vec![];
+
+        let result = xadd(&db, key.clone(), time, seq, fields.clone()).await;
+        assert_eq!(result, RedisValueRef::String("2-2".into()));
+
+        // less ms
+        let result = xadd(&db, key.clone(), Some(1), Some(3), fields.clone()).await;
+        assert_eq!(
+            result,
+            ref_error(
+                "ERR The ID specified in XADD is equal or smaller than the target stream top item"
+            )
+        );
+
+        // less seq
+        let result = xadd(&db, key.clone(), Some(2), Some(1), fields.clone()).await;
+        assert_eq!(
+            result,
+            ref_error(
+                "ERR The ID specified in XADD is equal or smaller than the target stream top item"
             )
         );
     }

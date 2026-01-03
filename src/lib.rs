@@ -36,6 +36,10 @@ impl From<&RedisValue> for RedisValueRef {
     }
 }
 
+pub fn ref_error(msg: &str) -> RedisValueRef {
+    RedisValueRef::Error(Bytes::from(msg.to_string()))
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RedisDb {
     pub dict: DashMap<String, RedisValue>,

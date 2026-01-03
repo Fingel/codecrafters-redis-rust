@@ -17,7 +17,7 @@ pub enum RedisCommand {
     LPop(Bytes, Option<u64>),
     BLPop(Bytes, Option<f64>),
     Type(Bytes),
-    XAdd(Bytes, Option<u64>, Option<u64>, Vec<(Bytes, Bytes)>),
+    XAdd(Bytes, (Option<u64>, Option<u64>), Vec<(Bytes, Bytes)>),
 }
 
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -272,7 +272,7 @@ impl RedisInterpreter {
         } else {
             let key = extract_string_arg(&args[1], "key")?;
             let id = extract_lossy_string_arg(&args[2], "id")?;
-            let (time, seq) = self.parse_stream_id(&id)?;
+            let id_tuple = self.parse_stream_id(&id)?;
             let fields = args[3..]
                 .chunks_exact(2)
                 .map(|chunk| {
@@ -281,7 +281,7 @@ impl RedisInterpreter {
                     Ok((field, value))
                 })
                 .collect::<Result<Vec<(Bytes, Bytes)>, CmdError>>()?;
-            Ok(RedisCommand::XAdd(key, time, seq, fields))
+            Ok(RedisCommand::XAdd(key, id_tuple, fields))
         }
     }
 }
@@ -337,8 +337,7 @@ mod tests {
             command,
             RedisCommand::XAdd(
                 Bytes::from("key"),
-                Some(0),
-                Some(1),
+                (Some(0), Some(1)),
                 vec![
                     (Bytes::from("field1"), Bytes::from("value1")),
                     (Bytes::from("field2"), Bytes::from("value2"))

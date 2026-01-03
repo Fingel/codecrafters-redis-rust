@@ -95,10 +95,10 @@ fn compute_stream_id(ms: Option<u64>, seq: Option<u64>, last_stream: &StreamId) 
 pub async fn xadd(
     db: &Db,
     key: Bytes,
-    ms: Option<u64>,
-    seq: Option<u64>,
+    id_tuple: (Option<u64>, Option<u64>),
     fields: Vec<(Bytes, Bytes)>,
 ) -> RedisValueRef {
+    let (ms, seq) = id_tuple;
     if ms == Some(0) && seq == Some(0) {
         return ref_error("ERR The ID specified in XADD must be greater than 0-0");
     }
@@ -220,7 +220,7 @@ mod tests {
             (Bytes::from("field2"), Bytes::from("value2")),
         ];
 
-        let result = xadd(&db, key.clone(), time, seq, fields.clone()).await;
+        let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
         assert_eq!(result, RedisValueRef::String("1-1".into()));
 
         let redis_val = db
@@ -246,10 +246,10 @@ mod tests {
         let seq = Some(1);
         let fields = vec![];
 
-        let result = xadd(&db, key.clone(), time, seq, fields.clone()).await;
+        let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
         assert_eq!(result, RedisValueRef::String("1-1".into()));
 
-        let result = xadd(&db, key.clone(), Some(1), None, fields.clone()).await;
+        let result = xadd(&db, key.clone(), (Some(1), None), fields.clone()).await;
         assert_eq!(result, RedisValueRef::String("1-2".into()));
     }
 
@@ -261,10 +261,10 @@ mod tests {
         let seq = Some(1);
         let fields = vec![];
 
-        let result = xadd(&db, key.clone(), time, seq, fields.clone()).await;
+        let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
         assert_eq!(result, RedisValueRef::String("1-1".into()));
 
-        let result = xadd(&db, key.clone(), time, seq, fields.clone()).await;
+        let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
         assert_eq!(
             result,
             ref_error(
@@ -281,11 +281,11 @@ mod tests {
         let seq = Some(2);
         let fields = vec![];
 
-        let result = xadd(&db, key.clone(), time, seq, fields.clone()).await;
+        let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
         assert_eq!(result, RedisValueRef::String("2-2".into()));
 
         // less ms
-        let result = xadd(&db, key.clone(), Some(1), Some(3), fields.clone()).await;
+        let result = xadd(&db, key.clone(), (Some(1), Some(3)), fields.clone()).await;
         assert_eq!(
             result,
             ref_error(
@@ -294,7 +294,7 @@ mod tests {
         );
 
         // less seq
-        let result = xadd(&db, key.clone(), Some(2), Some(1), fields.clone()).await;
+        let result = xadd(&db, key.clone(), (Some(2), Some(1)), fields.clone()).await;
         assert_eq!(
             result,
             ref_error(

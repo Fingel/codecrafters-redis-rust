@@ -18,6 +18,7 @@ pub enum RedisCommand {
     BLPop(Bytes, Option<f64>),
     Type(Bytes),
     XAdd(Bytes, (Option<u64>, Option<u64>), Vec<(Bytes, Bytes)>),
+    XRange(Bytes, (u64, Option<u64>), (u64, Option<u64>)),
 }
 
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -109,6 +110,7 @@ impl RedisInterpreter {
                     "BLPOP" => self.blpop(&args),
                     "TYPE" => self._type(&args),
                     "XADD" => self.xadd(&args),
+                    "XRANGE" => self.xrange(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -284,6 +286,28 @@ impl RedisInterpreter {
             Ok(RedisCommand::XAdd(key, id_tuple, fields))
         }
     }
+
+    fn xrange(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+        if args.len() != 4 {
+            Err(CmdError::InvalidArgumentNum)
+        } else {
+            let key = extract_string_arg(&args[1], "key")?;
+            let start = extract_lossy_string_arg(&args[2], "start")?;
+            let end = extract_lossy_string_arg(&args[3], "end")?;
+            let start_parsed = self.parse_stream_id(&start)?;
+            // MS is required for xrange
+            let start_ms = start_parsed
+                .0
+                .ok_or_else(|| CmdError::InvalidArgument("start".into()))?;
+            let end_parsed = self.parse_stream_id(&end)?;
+            let end_ms = end_parsed
+                .0
+                .ok_or_else(|| CmdError::InvalidArgument("end".into()))?;
+            let start_tuple = (start_ms, start_parsed.1);
+            let end_tuple = (end_ms, end_parsed.1);
+            Ok(RedisCommand::XRange(key, start_tuple, end_tuple))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -377,5 +401,23 @@ mod tests {
             .unwrap();
 
         assert_eq!(command, CmdError::InvalidArgument("id".into()));
+    }
+
+    #[test]
+    fn test_xrange() {
+        let interpreter = RedisInterpreter::new();
+        let command = interpreter
+            .interpret(RedisValueRef::Array(vec![
+                RedisValueRef::String(Bytes::from("XRANGE")),
+                RedisValueRef::String(Bytes::from("key")),
+                RedisValueRef::String(Bytes::from("1-0")),
+                RedisValueRef::String(Bytes::from("2-0")),
+            ]))
+            .unwrap();
+
+        assert_eq!(
+            command,
+            RedisCommand::XRange(Bytes::from("key"), (1, Some(0)), (2, Some(0)),)
+        );
     }
 }

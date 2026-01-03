@@ -36,3 +36,4 @@ So far there is support for:
 * BLPop
 * Type
 * XAdd
+* XRange

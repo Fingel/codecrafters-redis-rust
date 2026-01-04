@@ -193,6 +193,11 @@ pub async fn incr(db: &Db, key: Bytes) -> RedisValueRef {
     RedisValueRef::Int(result)
 }
 
+pub async fn info(_db: &Db, _section: Bytes) -> RedisValueRef {
+    let info = "# Replication\nrole:master\n";
+    RedisValueRef::String(Bytes::from(info))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

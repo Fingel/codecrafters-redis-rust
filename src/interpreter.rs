@@ -24,6 +24,7 @@ pub enum RedisCommand {
     Multi,
     Exec,
     Discard,
+    Info(Bytes),
 }
 
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -121,6 +122,7 @@ impl RedisInterpreter {
                     "MULTI" => Ok(RedisCommand::Multi),
                     "EXEC" => Ok(RedisCommand::Exec),
                     "DISCARD" => Ok(RedisCommand::Discard),
+                    "INFO" => self.info(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -355,6 +357,16 @@ impl RedisInterpreter {
             let key = extract_string_arg(&args[1], "key")?;
             Ok(RedisCommand::Incr(key))
         }
+    }
+
+    fn info(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+        let section = if args.len() > 1 {
+            extract_string_arg(&args[1], "section")?
+        } else {
+            Bytes::from("all".to_string())
+        };
+
+        Ok(RedisCommand::Info(section))
     }
 }
 

@@ -323,7 +323,7 @@ mod tests {
     use super::*;
 
     fn setup() -> Arc<RedisDb> {
-        Arc::new(RedisDb::new())
+        Arc::new(RedisDb::new(None))
     }
 
     #[test]

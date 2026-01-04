@@ -53,15 +53,17 @@ pub struct RedisDb {
     pub waiters: Arc<Mutex<HashMap<String, VecDeque<tokio::sync::oneshot::Sender<Bytes>>>>>,
     pub stream_waiters:
         Arc<Mutex<HashMap<String, VecDeque<tokio::sync::oneshot::Sender<RedisValueRef>>>>>,
+    pub replica_of: Option<(String, u16)>,
 }
 
 impl RedisDb {
-    pub fn new() -> Self {
+    pub fn new(replica_of: Option<(String, u16)>) -> Self {
         RedisDb {
             dict: DashMap::new(),
             ttl: DashMap::new(),
             waiters: Arc::new(Mutex::new(HashMap::new())),
             stream_waiters: Arc::new(Mutex::new(HashMap::new())),
+            replica_of,
         }
     }
 
@@ -193,8 +195,13 @@ pub async fn incr(db: &Db, key: Bytes) -> RedisValueRef {
     RedisValueRef::Int(result)
 }
 
-pub async fn info(_db: &Db, _section: Bytes) -> RedisValueRef {
-    let info = "# Replication\nrole:master\n";
+pub async fn info(db: &Db, _section: Bytes) -> RedisValueRef {
+    let role = if db.replica_of.is_some() {
+        "slave"
+    } else {
+        "master"
+    };
+    let info = format!("# Replication\nrole:{}\n", role);
     RedisValueRef::String(Bytes::from(info))
 }
 
@@ -204,7 +211,7 @@ mod tests {
     use std::time::Duration;
 
     fn setup() -> Arc<RedisDb> {
-        Arc::new(RedisDb::new())
+        Arc::new(RedisDb::new(None))
     }
 
     #[tokio::test]

@@ -126,18 +126,28 @@ async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let port = if args.len() > 1
-        && let Some(ports_pos) = args.iter().position(|arg| arg == "--port")
-    {
+    let port = if let Some(ports_pos) = args.iter().position(|arg| arg == "--port") {
         args[ports_pos + 1].parse().unwrap_or(6379)
     } else {
         6379
+    };
+    let replica_of = if let Some(replica_of_pos) = args.iter().position(|arg| arg == "--replicaof")
+    {
+        let arg = args[replica_of_pos + 1].clone();
+        let split: Vec<&str> = arg.split(" ").collect();
+        if split.len() == 2 {
+            Some((split[0].to_string(), split[1].parse().unwrap_or(6379)))
+        } else {
+            None
+        }
+    } else {
+        None
     };
     println!("Starting server on port {}", port);
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
         .await
         .unwrap();
-    let db = Arc::new(RedisDb::new());
+    let db = Arc::new(RedisDb::new(replica_of));
 
     loop {
         let stream = listener.accept().await;

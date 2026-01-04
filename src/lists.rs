@@ -223,7 +223,7 @@ mod tests {
     use crate::{RedisDb, set};
 
     fn setup() -> Arc<RedisDb> {
-        Arc::new(RedisDb::new())
+        Arc::new(RedisDb::new(None))
     }
 
     #[tokio::test]

@@ -21,6 +21,7 @@ pub enum RedisCommand {
     XRange(Bytes, StreamIdIn, StreamIdIn),
     XRead(Vec<(Bytes, StreamIdIn)>, Option<u64>),
     Incr(Bytes),
+    Multi,
 }
 
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -115,6 +116,7 @@ impl RedisInterpreter {
                     "XRANGE" => self.xrange(&args),
                     "XREAD" => self.xread(&args),
                     "INCR" => self.incr(&args),
+                    "MULTI" => self.multi(),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -353,6 +355,10 @@ impl RedisInterpreter {
             let key = extract_string_arg(&args[1], "key")?;
             Ok(RedisCommand::Incr(key))
         }
+    }
+
+    fn multi(&self) -> Result<RedisCommand, CmdError> {
+        Ok(RedisCommand::Multi)
     }
 }
 

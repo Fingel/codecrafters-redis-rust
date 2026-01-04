@@ -193,6 +193,10 @@ pub async fn incr(db: &Db, key: Bytes) -> RedisValueRef {
     RedisValueRef::Int(result)
 }
 
+pub async fn multi(_db: &Arc<RedisDb>) -> RedisValueRef {
+    RedisValueRef::SimpleString(Bytes::from("OK"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,54 +1,14 @@
+use crate::{Db, RedisValue, parser::RedisValueRef, ref_error};
+use bytes::Bytes;
 use std::{collections::BTreeMap, time::SystemTime};
 
-use bytes::Bytes;
-
-use crate::{Db, RedisValue, parser::RedisValueRef, ref_error};
+type StreamData = Vec<(Bytes, Bytes)>;
+pub type StreamIdIn = (Option<u64>, Option<u64>);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamId {
     ms: u64,
     seq: u64,
-}
-
-type StreamData = Vec<(Bytes, Bytes)>;
-pub type StreamIdIn = (Option<u64>, Option<u64>);
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct StreamCollection(BTreeMap<StreamId, StreamData>);
-
-impl StreamCollection {
-    pub fn new() -> Self {
-        Self(BTreeMap::new())
-    }
-
-    pub fn insert(&mut self, id: StreamId, data: StreamData) {
-        self.0.insert(id, data);
-    }
-
-    pub fn get(&self, key: &StreamId) -> Option<&StreamData> {
-        self.0.get(key)
-    }
-
-    pub fn all(&self) -> Vec<(&StreamId, &StreamData)> {
-        self.0.iter().collect()
-    }
-}
-
-impl Default for StreamCollection {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PartialOrd for StreamId {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for StreamId {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.ms.cmp(&other.ms).then(self.seq.cmp(&other.seq))
-    }
 }
 
 impl StreamId {
@@ -83,9 +43,47 @@ impl StreamId {
     }
 }
 
+impl PartialOrd for StreamId {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for StreamId {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.ms.cmp(&other.ms).then(self.seq.cmp(&other.seq))
+    }
+}
+
 impl Default for StreamId {
     fn default() -> Self {
         Self::new(None, None)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StreamCollection(BTreeMap<StreamId, StreamData>);
+
+impl StreamCollection {
+    pub fn new() -> Self {
+        Self(BTreeMap::new())
+    }
+
+    pub fn insert(&mut self, id: StreamId, data: StreamData) {
+        self.0.insert(id, data);
+    }
+
+    pub fn get(&self, key: &StreamId) -> Option<&StreamData> {
+        self.0.get(key)
+    }
+
+    pub fn all(&self) -> Vec<(&StreamId, &StreamData)> {
+        self.0.iter().collect()
+    }
+}
+
+impl Default for StreamCollection {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

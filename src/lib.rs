@@ -170,7 +170,14 @@ pub async fn incr(db: &Db, key: Bytes) -> RedisValueRef {
         Some(entry) => match &*entry {
             RedisValue::String(value) => {
                 let new_value = String::from_utf8_lossy(value).to_string();
-                let new_value = new_value.parse::<i64>().unwrap_or(0);
+                let new_value = match new_value.parse::<i64>() {
+                    Ok(num) => num,
+                    Err(_) => {
+                        return RedisValueRef::Error(
+                            "ERR value is not an integer or out of range".into(),
+                        );
+                    }
+                };
                 new_value + 1
             }
             _ => {
@@ -257,6 +264,16 @@ mod tests {
 
         let result = incr(&db, key.clone()).await;
         assert_eq!(result, RedisValueRef::Int(2));
+    }
+
+    #[tokio::test]
+    async fn test_incr_not_number() {
+        let db = setup();
+        let key = Bytes::from("test_key");
+        set(&db, key.clone(), Bytes::from("stringlol")).await;
+
+        let result = incr(&db, key.clone()).await;
+        assert!(matches!(result, RedisValueRef::Error(_)));
     }
 
     #[test]

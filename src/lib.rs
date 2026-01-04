@@ -51,6 +51,8 @@ pub struct RedisDb {
     pub dict: DashMap<String, RedisValue>,
     pub ttl: DashMap<String, u64>,
     pub waiters: Arc<Mutex<HashMap<String, VecDeque<tokio::sync::oneshot::Sender<Bytes>>>>>,
+    pub stream_waiters:
+        Arc<Mutex<HashMap<String, VecDeque<tokio::sync::oneshot::Sender<RedisValueRef>>>>>,
 }
 
 impl RedisDb {
@@ -59,6 +61,7 @@ impl RedisDb {
             dict: DashMap::new(),
             ttl: DashMap::new(),
             waiters: Arc::new(Mutex::new(HashMap::new())),
+            stream_waiters: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

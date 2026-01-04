@@ -1,6 +1,10 @@
 use crate::{Db, RedisValue, parser::RedisValueRef, ref_error};
 use bytes::Bytes;
-use std::{collections::BTreeMap, time::SystemTime};
+use futures::stream::{FuturesUnordered, StreamExt};
+use std::{
+    collections::BTreeMap,
+    time::{Duration, SystemTime},
+};
 
 type StreamData = Vec<(Bytes, Bytes)>;
 pub type StreamIdIn = (Option<u64>, Option<u64>);
@@ -16,6 +20,20 @@ impl StreamId {
         ms: u64::MAX,
         seq: u64::MAX,
     };
+
+    pub fn increment(&self) -> Self {
+        if self.seq < u64::MAX {
+            Self {
+                ms: self.ms,
+                seq: self.seq + 1,
+            }
+        } else {
+            Self {
+                ms: self.ms.saturating_add(1),
+                seq: 0,
+            }
+        }
+    }
 
     pub fn new(ms: Option<u64>, seq: Option<u64>) -> Self {
         let ms = ms.unwrap_or(
@@ -120,6 +138,20 @@ fn compute_stream_id(ms: Option<u64>, seq: Option<u64>, last_stream: &StreamId) 
     }
 }
 
+fn notify_stream_waiters(db: &Db, key: &str, stream_id: &StreamId, fields: &StreamData) {
+    let mut waiters_guard = db.stream_waiters.lock().unwrap();
+    if let Some(waiter_queue) = waiters_guard.get_mut(key) {
+        for tx in waiter_queue.drain(..) {
+            if !tx.is_closed() {
+                let _ = tx.send(RedisValueRef::Array(vec![
+                    RedisValueRef::String(Bytes::from(key.to_string())),
+                    RedisValueRef::Array(vec![(stream_id, fields).into()]),
+                ]));
+            }
+        }
+    }
+}
+
 pub async fn xadd(
     db: &Db,
     key: Bytes,
@@ -147,6 +179,7 @@ pub async fn xadd(
                     }
                     None => StreamId::new(ms, seq),
                 };
+                notify_stream_waiters(db, &key_string, &stream_id, &fields);
                 existing_stream.insert(stream_id.clone(), fields);
 
                 RedisValueRef::String(stream_id.to_bytes())
@@ -189,33 +222,93 @@ pub async fn xrange(db: &Db, key: Bytes, start: StreamIdIn, stop: StreamIdIn) ->
     }
 }
 
-pub async fn xread(db: &Db, streams: Vec<(Bytes, StreamIdIn)>) -> RedisValueRef {
+async fn xread_results(
+    db: &Db,
+    streams: &Vec<(Bytes, StreamIdIn)>,
+    exclusive: bool,
+) -> Result<Vec<RedisValueRef>, RedisValueRef> {
     let mut result = Vec::new();
     for (key, stream_id) in streams {
-        let key_string = String::from_utf8_lossy(&key).to_string();
+        let key_string = String::from_utf8_lossy(key).to_string();
         match db.get_if_valid(&key_string) {
             Some(entry) => match &*entry {
                 RedisValue::Stream(stream) => {
-                    let start = StreamId {
+                    let mut start = StreamId {
                         ms: stream_id.0.unwrap_or(0),
                         seq: stream_id.1.unwrap_or(0),
                     };
-                    let results = stream
+                    if exclusive {
+                        start = start.increment();
+                    }
+                    let results: Vec<RedisValueRef> = stream
                         .0
                         .range(start..=StreamId::MAX)
                         .map(|e| e.into())
                         .collect();
-                    result.push(RedisValueRef::Array(vec![
-                        RedisValueRef::String(key.clone()),
-                        RedisValueRef::Array(results),
-                    ]));
+                    if !results.is_empty() {
+                        result.push(RedisValueRef::Array(vec![
+                            RedisValueRef::String(key.clone()),
+                            RedisValueRef::Array(results),
+                        ]));
+                    }
                 }
-                _ => return ref_error("Attempted to read non-stream value"),
+                _ => return Err(ref_error("Attempted to read non-stream value")),
             },
-            None => return ref_error("Key does not exist"),
+            None => return Err(ref_error("Key does not exist")),
         }
     }
-    RedisValueRef::Array(result)
+    Ok(result)
+}
+
+pub async fn xread(db: &Db, streams: Vec<(Bytes, StreamIdIn)>) -> RedisValueRef {
+    match xread_results(db, &streams, false).await {
+        Ok(result) => RedisValueRef::Array(result),
+        Err(err) => err,
+    }
+}
+
+pub async fn xread_block(
+    db: &Db,
+    streams: Vec<(Bytes, StreamIdIn)>,
+    timeout: u64,
+) -> RedisValueRef {
+    match xread_results(db, &streams, true).await {
+        Ok(result) => {
+            if !result.is_empty() {
+                RedisValueRef::Array(result)
+            } else {
+                let mut receivers = Vec::new();
+                for (key, _) in streams {
+                    let key_string = String::from_utf8_lossy(&key).to_string();
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    {
+                        let mut waiters = db.stream_waiters.lock().unwrap();
+                        waiters.entry(key_string).or_default().push_back(tx);
+                    }
+                    receivers.push(rx);
+                }
+                // Race all receivers - return on first success or timeout
+                let mut futs = receivers.into_iter().collect::<FuturesUnordered<_>>();
+
+                if timeout > 0 {
+                    if let Ok(Some(Ok(val))) =
+                        tokio::time::timeout(Duration::from_millis(timeout), futs.next()).await
+                    {
+                        return RedisValueRef::Array(vec![val]);
+                    }
+                } else {
+                    while let Some(result) = futs.next().await {
+                        if let Ok(val) = result {
+                            return RedisValueRef::Array(vec![val]);
+                        }
+                    }
+                }
+                RedisValueRef::NullArray
+            }
+        }
+
+        Err(err) => err,
+    }
 }
 
 #[cfg(test)]
@@ -653,5 +746,52 @@ mod tests {
                 ]),
             ])
         );
+    }
+
+    #[tokio::test]
+    async fn test_xadd_blocking() {
+        let db = setup();
+        let key = Bytes::from("test_stream");
+        let time = Some(1);
+        let seq = Some(1);
+        let fields = vec![
+            (Bytes::from("field1"), Bytes::from("value1")),
+            (Bytes::from("field2"), Bytes::from("value2")),
+        ];
+        // less than what we query for
+        xadd(&db, key.clone(), (time, seq), fields.clone()).await;
+
+        let db_clone = db.clone();
+        let key_clone = key.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            xadd(&db_clone, key_clone, (Some(2), Some(1)), fields.clone()).await;
+        });
+
+        let start = std::time::Instant::now();
+        let result = xread_block(&db, vec![(key.clone(), (Some(2), Some(0)))], 2000).await;
+        let elapsed = start.elapsed();
+
+        assert!(elapsed < Duration::from_millis(2000));
+        let expected = RedisValueRef::Array(vec![
+            RedisValueRef::String(key),
+            RedisValueRef::Array(vec![RedisValueRef::Array(vec![
+                RedisValueRef::String("2-1".into()),
+                RedisValueRef::Array(vec![
+                    RedisValueRef::String("field1".into()),
+                    RedisValueRef::String("value1".into()),
+                    RedisValueRef::String("field2".into()),
+                    RedisValueRef::String("value2".into()),
+                ]),
+            ])]),
+        ]);
+        match result {
+            RedisValueRef::Array(items) => {
+                assert_eq!(items[0], expected);
+            }
+            _ => {
+                panic!("Expected RedisValueRef::Array");
+            }
+        }
     }
 }

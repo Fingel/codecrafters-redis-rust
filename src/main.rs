@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use codecrafters_redis::{_type, Db, RedisDb, echo, get, lists, ping, set, set_ex, streams};
+use codecrafters_redis::{_type, Db, RedisDb, echo, get, incr, lists, ping, set, set_ex, streams};
 use codecrafters_redis::{
     interpreter::{RedisCommand, RedisInterpreter},
     parser::{RedisValueRef, RespParser},
@@ -55,6 +55,7 @@ async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
             Some(timeout) => streams::xread_block(db, streams, timeout).await,
             None => streams::xread(db, streams).await,
         },
+        RedisCommand::Incr(key) => incr(db, key).await,
     }
 }
 

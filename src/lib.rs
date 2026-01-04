@@ -164,6 +164,28 @@ pub async fn _type(db: &Db, key: Bytes) -> RedisValueRef {
     RedisValueRef::SimpleString(Bytes::from(result))
 }
 
+pub async fn incr(db: &Db, key: Bytes) -> RedisValueRef {
+    let key_string = String::from_utf8_lossy(&key).to_string();
+    let result = match db.get_if_valid(&key_string) {
+        Some(entry) => match &*entry {
+            RedisValue::String(value) => {
+                let new_value = String::from_utf8_lossy(value).to_string();
+                let new_value = new_value.parse::<i64>().unwrap_or(0);
+                new_value + 1
+            }
+            _ => {
+                return RedisValueRef::Error(Bytes::from("WRONGTYPE"));
+            }
+        },
+        None => 1,
+    };
+    db.dict.insert(
+        key_string,
+        RedisValue::String(Bytes::from(result.to_string())),
+    );
+    RedisValueRef::Int(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,6 +246,17 @@ mod tests {
 
         let result = _type(&db, Bytes::from("notexist")).await;
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("none")));
+    }
+
+    #[tokio::test]
+    async fn test_incr() {
+        let db = setup();
+        let key = Bytes::from("test_key");
+        let result = incr(&db, key.clone()).await;
+        assert_eq!(result, RedisValueRef::Int(1));
+
+        let result = incr(&db, key.clone()).await;
+        assert_eq!(result, RedisValueRef::Int(2));
     }
 
     #[test]

@@ -20,6 +20,7 @@ pub enum RedisCommand {
     XAdd(Bytes, StreamIdIn, Vec<(Bytes, Bytes)>),
     XRange(Bytes, StreamIdIn, StreamIdIn),
     XRead(Vec<(Bytes, StreamIdIn)>, Option<u64>),
+    Incr(Bytes),
 }
 
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -113,6 +114,7 @@ impl RedisInterpreter {
                     "XADD" => self.xadd(&args),
                     "XRANGE" => self.xrange(&args),
                     "XREAD" => self.xread(&args),
+                    "INCR" => self.incr(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -341,6 +343,15 @@ impl RedisInterpreter {
             let streams: Vec<(Bytes, StreamIdIn)> =
                 stream_keys.into_iter().zip(stream_ids).collect();
             Ok(RedisCommand::XRead(streams, timeout))
+        }
+    }
+
+    fn incr(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+        if args.len() != 2 {
+            Err(CmdError::InvalidArgumentNum)
+        } else {
+            let key = extract_string_arg(&args[1], "key")?;
+            Ok(RedisCommand::Incr(key))
         }
     }
 }

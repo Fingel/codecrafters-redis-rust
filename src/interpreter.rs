@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use thiserror::Error;
 
-use crate::parser::RedisValueRef;
+use crate::{parser::RedisValueRef, streams::StreamIdIn};
 
 #[derive(Debug, PartialEq)]
 pub enum RedisCommand {
@@ -17,12 +17,9 @@ pub enum RedisCommand {
     LPop(Bytes, Option<u64>),
     BLPop(Bytes, Option<f64>),
     Type(Bytes),
-    XAdd(Bytes, (Option<u64>, Option<u64>), Vec<(Bytes, Bytes)>),
-    XRange(
-        Bytes,
-        (Option<u64>, Option<u64>),
-        (Option<u64>, Option<u64>),
-    ),
+    XAdd(Bytes, StreamIdIn, Vec<(Bytes, Bytes)>),
+    XRange(Bytes, StreamIdIn, StreamIdIn),
+    XRead(Vec<(Bytes, StreamIdIn)>),
 }
 
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -115,6 +112,7 @@ impl RedisInterpreter {
                     "TYPE" => self._type(&args),
                     "XADD" => self.xadd(&args),
                     "XRANGE" => self.xrange(&args),
+                    "XREAD" => self.xread(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -248,7 +246,7 @@ impl RedisInterpreter {
         }
     }
 
-    fn parse_stream_id(&self, id: &str) -> Result<(Option<u64>, Option<u64>), CmdError> {
+    fn parse_stream_id(&self, id: &str) -> Result<StreamIdIn, CmdError> {
         if id == "*" || id == "-" || id == "+" {
             return Ok((None, None));
         }
@@ -301,6 +299,31 @@ impl RedisInterpreter {
             let start_parsed = self.parse_stream_id(&start)?;
             let end_parsed = self.parse_stream_id(&end)?;
             Ok(RedisCommand::XRange(key, start_parsed, end_parsed))
+        }
+    }
+
+    fn xread(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+        // XREAD streams stream1 stream2 0-1 1-1
+        if args.len() < 4
+            || extract_lossy_string_arg(&args[1], "streams")?.to_uppercase() != "STREAMS"
+        {
+            Err(CmdError::InvalidArgumentNum)
+        } else {
+            let mid = (args[2..].len() / 2) + 2;
+            let stream_keys = args[2..mid]
+                .iter()
+                .map(|arg| extract_string_arg(arg, "stream_id"))
+                .collect::<Result<Vec<Bytes>, CmdError>>()?;
+            let stream_ids = args[mid..]
+                .iter()
+                .map(|arg| {
+                    let id = extract_lossy_string_arg(arg, "stream_id")?;
+                    self.parse_stream_id(&id)
+                })
+                .collect::<Result<Vec<StreamIdIn>, CmdError>>()?;
+            let streams: Vec<(Bytes, StreamIdIn)> =
+                stream_keys.into_iter().zip(stream_ids).collect();
+            Ok(RedisCommand::XRead(streams))
         }
     }
 }
@@ -413,6 +436,30 @@ mod tests {
         assert_eq!(
             command,
             RedisCommand::XRange(Bytes::from("key"), (Some(1), Some(0)), (Some(2), Some(0)),)
+        );
+    }
+
+    #[test]
+    fn test_xread() {
+        // XREAD streams stream1 stream2 1-0 2-0
+        let interpreter = RedisInterpreter::new();
+        let command = interpreter
+            .interpret(RedisValueRef::Array(vec![
+                RedisValueRef::String(Bytes::from("XREAD")),
+                RedisValueRef::String(Bytes::from("streams")),
+                RedisValueRef::String(Bytes::from("stream1")),
+                RedisValueRef::String(Bytes::from("stream2")),
+                RedisValueRef::String(Bytes::from("1-0")),
+                RedisValueRef::String(Bytes::from("2-0")),
+            ]))
+            .unwrap();
+
+        assert_eq!(
+            command,
+            RedisCommand::XRead(vec![
+                (Bytes::from("stream1"), (Some(1), Some(0))),
+                (Bytes::from("stream2"), (Some(2), Some(0))),
+            ])
         );
     }
 }

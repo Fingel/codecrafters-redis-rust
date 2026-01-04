@@ -44,6 +44,11 @@ impl Ord for StreamId {
 }
 
 impl StreamId {
+    const MAX: StreamId = StreamId {
+        ms: u64::MAX,
+        seq: u64::MAX,
+    };
+
     pub fn new(ms: Option<u64>, seq: Option<u64>) -> Self {
         let ms = ms.unwrap_or(
             SystemTime::now()
@@ -77,6 +82,7 @@ impl Default for StreamId {
 }
 
 type StreamData = Vec<(Bytes, Bytes)>;
+pub type StreamIdIn = (Option<u64>, Option<u64>);
 
 fn compute_stream_id(ms: Option<u64>, seq: Option<u64>, last_stream: &StreamId) -> StreamId {
     match ms {
@@ -95,7 +101,7 @@ fn compute_stream_id(ms: Option<u64>, seq: Option<u64>, last_stream: &StreamId) 
 pub async fn xadd(
     db: &Db,
     key: Bytes,
-    id_tuple: (Option<u64>, Option<u64>),
+    id_tuple: StreamIdIn,
     fields: Vec<(Bytes, Bytes)>,
 ) -> RedisValueRef {
     let (ms, seq) = id_tuple;
@@ -135,12 +141,7 @@ pub async fn xadd(
     }
 }
 
-pub async fn xrange(
-    db: &Db,
-    key: Bytes,
-    start: (Option<u64>, Option<u64>),
-    stop: (Option<u64>, Option<u64>),
-) -> RedisValueRef {
+pub async fn xrange(db: &Db, key: Bytes, start: StreamIdIn, stop: StreamIdIn) -> RedisValueRef {
     let key_string = String::from_utf8_lossy(&key).to_string();
     let (start_ms, start_seq) = start;
     let (stop_ms, stop_seq) = stop;
@@ -181,6 +182,94 @@ pub async fn xrange(
         None => ref_error("Key does not exist"),
     }
 }
+
+pub async fn xread(db: &Db, streams: Vec<(Bytes, StreamIdIn)>) -> RedisValueRef {
+    let mut result = Vec::new();
+    for (key, stream_id) in streams {
+        let key_string = String::from_utf8_lossy(&key).to_string();
+        match db.get_if_valid(&key_string) {
+            Some(entry) => match &*entry {
+                RedisValue::Stream(stream) => {
+                    let start = StreamId {
+                        ms: stream_id.0.unwrap_or(0),
+                        seq: stream_id.1.unwrap_or(0),
+                    };
+                    let results = stream
+                        .0
+                        .range(start..=StreamId::MAX)
+                        .map(|(id, fields)| {
+                            RedisValueRef::Array(vec![
+                                RedisValueRef::String(id.to_bytes()),
+                                RedisValueRef::Array(
+                                    fields
+                                        .iter()
+                                        .flat_map(|(k, v)| {
+                                            vec![
+                                                RedisValueRef::String(k.clone()),
+                                                RedisValueRef::String(v.clone()),
+                                            ]
+                                        })
+                                        .collect(),
+                                ),
+                            ])
+                        })
+                        .collect();
+                    result.push(RedisValueRef::Array(vec![
+                        RedisValueRef::String(key.clone()),
+                        RedisValueRef::Array(results),
+                    ]));
+                }
+                _ => return ref_error("Attempted to read non-stream value"),
+            },
+            None => return ref_error("Key does not exist"),
+        }
+    }
+    RedisValueRef::Array(result)
+}
+
+// pub async fn _xread(db: &Db, streams: Vec<(Bytes, StreamIdIn)>) -> RedisValueRef {
+//     let key_string = String::from_utf8_lossy(&key).to_string();
+//     match db.get_if_valid(&key_string) {
+//         Some(entry) => match &*entry {
+//             RedisValue::Stream(stream) => {
+//                 let mut result = Vec::new();
+//                 for (stream_key, stream_id) in streams {
+//                     let start = StreamId {
+//                         ms: stream_id.0.unwrap_or(0),
+//                         seq: stream_id.1.unwrap_or(0),
+//                     };
+//                     let results = stream
+//                         .0
+//                         .range(start..=StreamId::MAX)
+//                         .map(|(id, fields)| {
+//                             RedisValueRef::Array(vec![
+//                                 RedisValueRef::String(id.to_bytes()),
+//                                 RedisValueRef::Array(
+//                                     fields
+//                                         .iter()
+//                                         .flat_map(|(k, v)| {
+//                                             vec![
+//                                                 RedisValueRef::String(k.clone()),
+//                                                 RedisValueRef::String(v.clone()),
+//                                             ]
+//                                         })
+//                                         .collect(),
+//                                 ),
+//                             ])
+//                         })
+//                         .collect();
+//                     result.push(RedisValueRef::Array(vec![
+//                         RedisValueRef::String(stream_key.clone()),
+//                         RedisValueRef::Array(results),
+//                     ]));
+//                 }
+//                 RedisValueRef::Array(result)
+//             }
+//             _ => ref_error("Attempted read on non-stream value"),
+//         },
+//         None => ref_error("Key does not exist"),
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
@@ -473,6 +562,150 @@ mod tests {
                         RedisValueRef::String("2-2-field2".into()),
                         RedisValueRef::String("2-2value2".into()),
                     ]),
+                ]),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_xread() {
+        let db = setup();
+        let key1 = Bytes::from("test_stream");
+        let entries = vec![
+            (
+                Some(1),
+                Some(0),
+                vec![
+                    (Bytes::from("1-1-0-field1"), Bytes::from("1-1-0value1")),
+                    (Bytes::from("1-1-0-field2"), Bytes::from("1-1-0value2")),
+                ],
+            ),
+            (
+                Some(2),
+                Some(0),
+                vec![
+                    (Bytes::from("1-2-0-field1"), Bytes::from("1-2-0value1")),
+                    (Bytes::from("1-2-0-field2"), Bytes::from("1-2-0value2")),
+                ],
+            ),
+            (
+                Some(2),
+                Some(2),
+                vec![
+                    (Bytes::from("1-2-2-field1"), Bytes::from("1-2-2value1")),
+                    (Bytes::from("1-2-2-field2"), Bytes::from("1-2-2value2")),
+                ],
+            ),
+        ];
+        for entry in entries {
+            xadd(&db, key1.clone(), (entry.0, entry.1), entry.2).await;
+        }
+
+        let key2 = Bytes::from("test_stream2");
+        let entries2 = vec![
+            (
+                Some(1),
+                Some(0),
+                vec![
+                    (Bytes::from("2-1-0-field1"), Bytes::from("2-1-0value1")),
+                    (Bytes::from("2-1-0-field2"), Bytes::from("2-1-0value2")),
+                ],
+            ),
+            (
+                Some(2),
+                Some(0),
+                vec![
+                    (Bytes::from("2-2-0-field1"), Bytes::from("2-2-0value1")),
+                    (Bytes::from("2-2-0-field2"), Bytes::from("2-2-0value2")),
+                ],
+            ),
+            (
+                Some(2),
+                Some(2),
+                vec![
+                    (Bytes::from("2-2-2-field1"), Bytes::from("2-2-2value1")),
+                    (Bytes::from("2-2-2-field2"), Bytes::from("2-2-2value2")),
+                ],
+            ),
+        ];
+        for entry in entries2 {
+            xadd(&db, key2.clone(), (entry.0, entry.1), entry.2).await;
+        }
+
+        let result = xread(
+            &db,
+            vec![
+                (key1.clone(), (Some(0), Some(0))),
+                (key2.clone(), (Some(0), Some(0))),
+            ],
+        )
+        .await;
+        assert_eq!(
+            result,
+            RedisValueRef::Array(vec![
+                RedisValueRef::Array(vec![
+                    RedisValueRef::String(key1),
+                    RedisValueRef::Array(vec![
+                        RedisValueRef::Array(vec![
+                            RedisValueRef::String("1-0".into()),
+                            RedisValueRef::Array(vec![
+                                RedisValueRef::String("1-1-0-field1".into()),
+                                RedisValueRef::String("1-1-0value1".into()),
+                                RedisValueRef::String("1-1-0-field2".into()),
+                                RedisValueRef::String("1-1-0value2".into()),
+                            ]),
+                        ]),
+                        RedisValueRef::Array(vec![
+                            RedisValueRef::String("2-0".into()),
+                            RedisValueRef::Array(vec![
+                                RedisValueRef::String("1-2-0-field1".into()),
+                                RedisValueRef::String("1-2-0value1".into()),
+                                RedisValueRef::String("1-2-0-field2".into()),
+                                RedisValueRef::String("1-2-0value2".into()),
+                            ]),
+                        ]),
+                        RedisValueRef::Array(vec![
+                            RedisValueRef::String("2-2".into()),
+                            RedisValueRef::Array(vec![
+                                RedisValueRef::String("1-2-2-field1".into()),
+                                RedisValueRef::String("1-2-2value1".into()),
+                                RedisValueRef::String("1-2-2-field2".into()),
+                                RedisValueRef::String("1-2-2value2".into()),
+                            ]),
+                        ]),
+                    ]) // end key 1
+                ]),
+                RedisValueRef::Array(vec![
+                    RedisValueRef::String(key2),
+                    RedisValueRef::Array(vec![
+                        RedisValueRef::Array(vec![
+                            RedisValueRef::String("1-0".into()),
+                            RedisValueRef::Array(vec![
+                                RedisValueRef::String("2-1-0-field1".into()),
+                                RedisValueRef::String("2-1-0value1".into()),
+                                RedisValueRef::String("2-1-0-field2".into()),
+                                RedisValueRef::String("2-1-0value2".into()),
+                            ]),
+                        ]),
+                        RedisValueRef::Array(vec![
+                            RedisValueRef::String("2-0".into()),
+                            RedisValueRef::Array(vec![
+                                RedisValueRef::String("2-2-0-field1".into()),
+                                RedisValueRef::String("2-2-0value1".into()),
+                                RedisValueRef::String("2-2-0-field2".into()),
+                                RedisValueRef::String("2-2-0value2".into()),
+                            ]),
+                        ]),
+                        RedisValueRef::Array(vec![
+                            RedisValueRef::String("2-2".into()),
+                            RedisValueRef::Array(vec![
+                                RedisValueRef::String("2-2-2-field1".into()),
+                                RedisValueRef::String("2-2-2value1".into()),
+                                RedisValueRef::String("2-2-2-field2".into()),
+                                RedisValueRef::String("2-2-2value2".into()),
+                            ]),
+                        ]),
+                    ]) // end key 2
                 ]),
             ])
         );

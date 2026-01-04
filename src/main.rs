@@ -51,6 +51,7 @@ async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Type(key) => _type(db, key).await,
         RedisCommand::XAdd(key, id_tuple, fields) => streams::xadd(db, key, id_tuple, fields).await,
         RedisCommand::XRange(key, start, stop) => streams::xrange(db, key, start, stop).await,
+        RedisCommand::XRead(streams) => streams::xread(db, streams).await,
     }
 }
 

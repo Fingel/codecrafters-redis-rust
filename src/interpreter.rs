@@ -22,6 +22,7 @@ pub enum RedisCommand {
     XRead(Vec<(Bytes, StreamIdIn)>, Option<u64>),
     Incr(Bytes),
     Multi,
+    Exec,
 }
 
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -117,6 +118,7 @@ impl RedisInterpreter {
                     "XREAD" => self.xread(&args),
                     "INCR" => self.incr(&args),
                     "MULTI" => self.multi(),
+                    "EXEC" => self.exec(),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -359,6 +361,10 @@ impl RedisInterpreter {
 
     fn multi(&self) -> Result<RedisCommand, CmdError> {
         Ok(RedisCommand::Multi)
+    }
+
+    fn exec(&self) -> Result<RedisCommand, CmdError> {
+        Ok(RedisCommand::Exec)
     }
 }
 

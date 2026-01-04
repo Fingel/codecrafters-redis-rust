@@ -197,6 +197,10 @@ pub async fn multi(_db: &Arc<RedisDb>) -> RedisValueRef {
     RedisValueRef::SimpleString(Bytes::from("OK"))
 }
 
+pub async fn exec(_db: &Arc<RedisDb>) -> RedisValueRef {
+    RedisValueRef::Error(Bytes::from("ERR EXEC without MULTI"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -237,6 +237,9 @@ async fn xread_results(
                         ms: stream_id.0.unwrap_or(0),
                         seq: stream_id.1.unwrap_or(0),
                     };
+                    if start == StreamId::MAX {
+                        continue; // only looking for new entries
+                    }
                     if exclusive {
                         start = start.increment();
                     }

@@ -250,6 +250,9 @@ impl RedisInterpreter {
         if id == "*" || id == "-" || id == "+" {
             return Ok((None, None));
         }
+        if id == "$" {
+            return Ok((Some(u64::MAX), Some(u64::MAX)));
+        }
         let parts: Vec<&str> = id.split('-').collect();
         let err = CmdError::InvalidArgument("id".into());
         if parts.len() != 2 {

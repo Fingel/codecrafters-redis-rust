@@ -4,10 +4,19 @@ use bytes::Bytes;
 
 use crate::{Db, RedisValue, parser::RedisValueRef, ref_error};
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct RedisStream(BTreeMap<StreamId, StreamData>);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamId {
+    ms: u64,
+    seq: u64,
+}
 
-impl RedisStream {
+type StreamData = Vec<(Bytes, Bytes)>;
+pub type StreamIdIn = (Option<u64>, Option<u64>);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StreamCollection(BTreeMap<StreamId, StreamData>);
+
+impl StreamCollection {
     pub fn new() -> Self {
         Self(BTreeMap::new())
     }
@@ -19,19 +28,18 @@ impl RedisStream {
     pub fn get(&self, key: &StreamId) -> Option<&StreamData> {
         self.0.get(key)
     }
+
+    pub fn all(&self) -> Vec<(&StreamId, &StreamData)> {
+        self.0.iter().collect()
+    }
 }
 
-impl Default for RedisStream {
+impl Default for StreamCollection {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StreamId {
-    ms: u64,
-    seq: u64,
-}
 impl PartialOrd for StreamId {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
@@ -81,8 +89,24 @@ impl Default for StreamId {
     }
 }
 
-type StreamData = Vec<(Bytes, Bytes)>;
-pub type StreamIdIn = (Option<u64>, Option<u64>);
+impl From<(&StreamId, &StreamData)> for RedisValueRef {
+    fn from(value: (&StreamId, &StreamData)) -> Self {
+        let (id, data) = value;
+        RedisValueRef::Array(vec![
+            RedisValueRef::String(id.to_bytes()),
+            RedisValueRef::Array(
+                data.iter()
+                    .flat_map(|(k, v)| {
+                        vec![
+                            RedisValueRef::String(k.clone()),
+                            RedisValueRef::String(v.clone()),
+                        ]
+                    })
+                    .collect(),
+            ),
+        ])
+    }
+}
 
 fn compute_stream_id(ms: Option<u64>, seq: Option<u64>, last_stream: &StreamId) -> StreamId {
     match ms {
@@ -132,7 +156,7 @@ pub async fn xadd(
             _ => ref_error("Attempted add to non-stream value"),
         },
         None => {
-            let mut new_map = RedisStream::new();
+            let mut new_map = StreamCollection::new();
             let new_id = StreamId::new(ms, seq);
             new_map.insert(new_id.clone(), fields);
             db.dict.insert(key_string, RedisValue::Stream(new_map));
@@ -156,24 +180,8 @@ pub async fn xrange(db: &Db, key: Bytes, start: StreamIdIn, stop: StreamIdIn) ->
                     ms: stop_ms.unwrap_or(u64::MAX),
                     seq: stop_seq.unwrap_or(u64::MAX),
                 };
-
-                let mut result = Vec::new();
-                for (id, fields) in stream.0.range(start..=stop) {
-                    result.push(RedisValueRef::Array(vec![
-                        RedisValueRef::String(id.to_bytes()),
-                        RedisValueRef::Array(
-                            fields
-                                .iter()
-                                .flat_map(|(k, v)| {
-                                    vec![
-                                        RedisValueRef::String(k.clone()),
-                                        RedisValueRef::String(v.clone()),
-                                    ]
-                                })
-                                .collect(),
-                        ),
-                    ]));
-                }
+                let result: Vec<RedisValueRef> =
+                    stream.0.range(start..=stop).map(|e| e.into()).collect();
 
                 RedisValueRef::Array(result)
             }
@@ -197,22 +205,7 @@ pub async fn xread(db: &Db, streams: Vec<(Bytes, StreamIdIn)>) -> RedisValueRef 
                     let results = stream
                         .0
                         .range(start..=StreamId::MAX)
-                        .map(|(id, fields)| {
-                            RedisValueRef::Array(vec![
-                                RedisValueRef::String(id.to_bytes()),
-                                RedisValueRef::Array(
-                                    fields
-                                        .iter()
-                                        .flat_map(|(k, v)| {
-                                            vec![
-                                                RedisValueRef::String(k.clone()),
-                                                RedisValueRef::String(v.clone()),
-                                            ]
-                                        })
-                                        .collect(),
-                                ),
-                            ])
-                        })
+                        .map(|e| e.into())
                         .collect();
                     result.push(RedisValueRef::Array(vec![
                         RedisValueRef::String(key.clone()),
@@ -226,50 +219,6 @@ pub async fn xread(db: &Db, streams: Vec<(Bytes, StreamIdIn)>) -> RedisValueRef 
     }
     RedisValueRef::Array(result)
 }
-
-// pub async fn _xread(db: &Db, streams: Vec<(Bytes, StreamIdIn)>) -> RedisValueRef {
-//     let key_string = String::from_utf8_lossy(&key).to_string();
-//     match db.get_if_valid(&key_string) {
-//         Some(entry) => match &*entry {
-//             RedisValue::Stream(stream) => {
-//                 let mut result = Vec::new();
-//                 for (stream_key, stream_id) in streams {
-//                     let start = StreamId {
-//                         ms: stream_id.0.unwrap_or(0),
-//                         seq: stream_id.1.unwrap_or(0),
-//                     };
-//                     let results = stream
-//                         .0
-//                         .range(start..=StreamId::MAX)
-//                         .map(|(id, fields)| {
-//                             RedisValueRef::Array(vec![
-//                                 RedisValueRef::String(id.to_bytes()),
-//                                 RedisValueRef::Array(
-//                                     fields
-//                                         .iter()
-//                                         .flat_map(|(k, v)| {
-//                                             vec![
-//                                                 RedisValueRef::String(k.clone()),
-//                                                 RedisValueRef::String(v.clone()),
-//                                             ]
-//                                         })
-//                                         .collect(),
-//                                 ),
-//                             ])
-//                         })
-//                         .collect();
-//                     result.push(RedisValueRef::Array(vec![
-//                         RedisValueRef::String(stream_key.clone()),
-//                         RedisValueRef::Array(results),
-//                     ]));
-//                 }
-//                 RedisValueRef::Array(result)
-//             }
-//             _ => ref_error("Attempted read on non-stream value"),
-//         },
-//         None => ref_error("Key does not exist"),
-//     }
-// }
 
 #[cfg(test)]
 mod tests {
@@ -445,24 +394,21 @@ mod tests {
         let key = Bytes::from("test_stream");
         let entries = vec![
             (
-                Some(1),
-                Some(0),
+                (Some(1), Some(0)),
                 vec![
                     (Bytes::from("1-0-field1"), Bytes::from("1-0value1")),
                     (Bytes::from("1-0-field2"), Bytes::from("1-0value2")),
                 ],
             ),
             (
-                Some(2),
-                Some(0),
+                (Some(2), Some(0)),
                 vec![
                     (Bytes::from("2-0-field1"), Bytes::from("2-0value1")),
                     (Bytes::from("2-0-field2"), Bytes::from("2-0value2")),
                 ],
             ),
             (
-                Some(2),
-                Some(2),
+                (Some(2), Some(2)),
                 vec![
                     (Bytes::from("2-2-field1"), Bytes::from("2-2value1")),
                     (Bytes::from("2-2-field2"), Bytes::from("2-2value2")),
@@ -470,7 +416,7 @@ mod tests {
             ),
         ];
         for entry in entries {
-            xadd(&db, key.clone(), (entry.0, entry.1), entry.2).await;
+            xadd(&db, key.clone(), entry.0, entry.1).await;
         }
 
         let result = xrange(&db, key.clone(), (Some(0), Some(0)), (Some(2), Some(2))).await;

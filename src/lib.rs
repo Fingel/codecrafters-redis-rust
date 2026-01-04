@@ -54,6 +54,8 @@ pub struct RedisDb {
     pub stream_waiters:
         Arc<Mutex<HashMap<String, VecDeque<tokio::sync::oneshot::Sender<RedisValueRef>>>>>,
     pub replica_of: Option<(String, u16)>,
+    pub replication_id: String,
+    pub replication_offset: u64,
 }
 
 impl RedisDb {
@@ -64,6 +66,8 @@ impl RedisDb {
             waiters: Arc::new(Mutex::new(HashMap::new())),
             stream_waiters: Arc::new(Mutex::new(HashMap::new())),
             replica_of,
+            replication_id: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
+            replication_offset: 0,
         }
     }
 
@@ -201,7 +205,13 @@ pub async fn info(db: &Db, _section: Bytes) -> RedisValueRef {
     } else {
         "master"
     };
-    let info = format!("# Replication\nrole:{}\n", role);
+    let info = format!(
+        "# Replication\n\
+        role:{}\n\
+        master_replid:{}\n\
+        master_repl_offset:{}\n",
+        role, db.replication_id, db.replication_offset
+    );
     RedisValueRef::String(Bytes::from(info))
 }
 

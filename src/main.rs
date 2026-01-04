@@ -49,6 +49,23 @@ async fn process(stream: TcpStream, db: Db) {
                                 transport.send(resp).await.unwrap();
                             }
                         }
+                        RedisCommand::Discard => {
+                            if in_transaction {
+                                in_transaction = false;
+                                queued_commands.clear();
+                                transport
+                                    .send(RedisValueRef::SimpleString(Bytes::from("OK")))
+                                    .await
+                                    .unwrap();
+                            } else {
+                                transport
+                                    .send(RedisValueRef::Error(Bytes::from(
+                                        "ERR DISCARD without MULTI",
+                                    )))
+                                    .await
+                                    .unwrap();
+                            }
+                        }
                         _ => {
                             if in_transaction {
                                 queued_commands.push(command);
@@ -99,6 +116,7 @@ async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Incr(key) => incr(db, key).await,
         RedisCommand::Multi => unreachable!(),
         RedisCommand::Exec => unreachable!(),
+        RedisCommand::Discard => unreachable!(),
     }
 }
 

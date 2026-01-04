@@ -23,6 +23,7 @@ pub enum RedisCommand {
     Incr(Bytes),
     Multi,
     Exec,
+    Discard,
 }
 
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -102,7 +103,7 @@ impl RedisInterpreter {
                 };
 
                 match command.as_str() {
-                    "PING" => self.ping(),
+                    "PING" => Ok(RedisCommand::Ping),
                     "ECHO" => self.echo(&args),
                     "SET" => self.set(&args),
                     "GET" => self.get(&args),
@@ -117,17 +118,14 @@ impl RedisInterpreter {
                     "XRANGE" => self.xrange(&args),
                     "XREAD" => self.xread(&args),
                     "INCR" => self.incr(&args),
-                    "MULTI" => self.multi(),
-                    "EXEC" => self.exec(),
+                    "MULTI" => Ok(RedisCommand::Multi),
+                    "EXEC" => Ok(RedisCommand::Exec),
+                    "DISCARD" => Ok(RedisCommand::Discard),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
             _ => Err(CmdError::InvalidCommandType),
         }
-    }
-
-    fn ping(&self) -> Result<RedisCommand, CmdError> {
-        Ok(RedisCommand::Ping)
     }
 
     fn echo(&self, args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
@@ -357,14 +355,6 @@ impl RedisInterpreter {
             let key = extract_string_arg(&args[1], "key")?;
             Ok(RedisCommand::Incr(key))
         }
-    }
-
-    fn multi(&self) -> Result<RedisCommand, CmdError> {
-        Ok(RedisCommand::Multi)
-    }
-
-    fn exec(&self) -> Result<RedisCommand, CmdError> {
-        Ok(RedisCommand::Exec)
     }
 }
 

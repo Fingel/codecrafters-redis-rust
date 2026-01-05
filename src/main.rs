@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use codecrafters_redis::parser::RedisValueRef;
+use codecrafters_redis::replication::psync_resp;
 use codecrafters_redis::{Db, RedisDb, handle_command, replication};
 use codecrafters_redis::{
     interpreter::RedisCommand,
@@ -56,13 +58,38 @@ async fn process(stream: TcpStream, db: Db) {
                                     .unwrap();
                             }
                         }
+                        RedisCommand::Psync(id_in, offset_in) => {
+                            println!("Master - Got replication request");
+                            let response = psync_resp(&db, id_in, offset_in).await;
+                            transport.send(response).await.unwrap();
+                            let (tx, mut rx) = tokio::sync::mpsc::channel::<RedisCommand>(1024);
+                            db.replicating_to.lock().unwrap().push(tx);
+                            loop {
+                                if let Some(command) = rx.recv().await {
+                                    println!("Master - Replicating command: {:?}", command.clone());
+                                    let r_value: RedisValueRef = match command.try_into() {
+                                        Ok(val) => val,
+                                        Err(_) => {
+                                            eprintln!("Command not available for replication");
+                                            continue;
+                                        }
+                                    };
+                                    transport.send(r_value).await.unwrap();
+                                }
+                            }
+                        }
                         _ => {
                             if in_transaction {
                                 queued_commands.push(command);
                                 transport.send(RSimpleString("QUEUED")).await.unwrap();
                             } else {
-                                let result = handle_command(&db, command).await;
+                                println!("Master - Received command: {:?}", command);
+                                let result = handle_command(&db, command.clone()).await;
                                 transport.send(result).await.unwrap();
+                                let replicate_to = { db.replicating_to.lock().unwrap().clone() };
+                                for tx in replicate_to {
+                                    tx.send(command.clone()).await.unwrap();
+                                }
                             }
                         }
                     },
@@ -108,6 +135,7 @@ async fn main() {
 
     // Replication
     if let Some((master_addr, master_port)) = db.replica_of.clone() {
+        let db = db.clone();
         tokio::spawn(async move {
             let stream = match TcpStream::connect((master_addr, master_port)).await {
                 Ok(stream) => stream,
@@ -120,6 +148,18 @@ async fn main() {
             if let Err(e) = replication::handshake(&mut transport, port).await {
                 eprintln!("Replication handshake failed: {}", e);
                 std::process::exit(1);
+            }
+            while let Some(redis_value) = transport.next().await {
+                match redis_value {
+                    Ok(value) => match value.try_into() {
+                        Ok(command) => {
+                            println!("Replica - Received command: {:?}", command);
+                            handle_command(&db, command).await;
+                        }
+                        Err(e) => eprintln!("Failed to parse command: {}", e),
+                    },
+                    Err(e) => eprintln!("Failed to read command: {:?}", e),
+                }
             }
         });
     }

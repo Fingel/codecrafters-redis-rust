@@ -5,7 +5,7 @@ use crate::{
     streams::StreamIdIn,
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum RedisCommand {
     Ping,
     Echo(String),
@@ -124,6 +124,9 @@ impl TryFrom<RedisCommand> for RedisValueRef {
     fn try_from(cmd: RedisCommand) -> Result<Self, CmdError> {
         let value = match cmd {
             RedisCommand::Ping => RArray(vec![RString("PING")]),
+            RedisCommand::Set(key, value) => {
+                RArray(vec![RString("SET"), RString(key), RString(value)])
+            }
             RedisCommand::ReplConf(key, value) => {
                 RArray(vec![RString("REPLCONF"), RString(key), RString(value)])
             }

@@ -56,6 +56,7 @@ pub struct RedisDb {
     pub stream_waiters:
         Arc<Mutex<HashMap<String, VecDeque<tokio::sync::oneshot::Sender<RedisValueRef>>>>>,
     pub replica_of: Option<(String, u16)>,
+    pub replicating_to: Arc<Mutex<Vec<tokio::sync::mpsc::Sender<RedisCommand>>>>,
     pub replication_id: String,
     pub replication_offset: u64,
 }
@@ -68,6 +69,7 @@ impl RedisDb {
             waiters: Arc::new(Mutex::new(HashMap::new())),
             stream_waiters: Arc::new(Mutex::new(HashMap::new())),
             replica_of,
+            replicating_to: Arc::new(Mutex::new(Vec::new())),
             replication_id: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
             replication_offset: 0,
         }
@@ -146,7 +148,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Discard => unreachable!(),
         RedisCommand::Info(section) => info(db, section).await,
         RedisCommand::ReplConf(key, value) => replication::replconf_resp(key, value).await,
-        RedisCommand::Psync(id, offset) => replication::psync_resp(db, id, offset).await,
+        RedisCommand::Psync(_id, _offset) => unreachable!(),
     }
 }
 

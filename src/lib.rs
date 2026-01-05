@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::interpreter::RedisCommand;
 use crate::parser::{RArray, RError, RInt, RNull, RSimpleString, RString, RedisValueRef};
 use crate::streams::StreamCollection;
 use bytes::Bytes;
@@ -118,6 +119,36 @@ impl RedisDb {
 }
 
 pub type Db = Arc<RedisDb>;
+
+pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
+    match command {
+        RedisCommand::Ping => ping(),
+        RedisCommand::Echo(arg) => echo(arg),
+        RedisCommand::Set(key, value) => set(db, key, value).await,
+        RedisCommand::SetEx(key, value, ttl) => set_ex(db, key, value, ttl).await,
+        RedisCommand::Get(key) => get(db, key).await,
+        RedisCommand::Rpush(key, value) => lists::rpush(db, key, value).await,
+        RedisCommand::Lpush(key, value) => lists::lpush(db, key, value).await,
+        RedisCommand::Lrange(key, start, stop) => lists::lrange(db, key, start, stop).await,
+        RedisCommand::LLen(key) => lists::llen(db, key).await,
+        RedisCommand::LPop(key, num_elements) => lists::lpop(db, key, num_elements).await,
+        RedisCommand::BLPop(key, timeout) => lists::blpop(db, key, timeout).await,
+        RedisCommand::Type(key) => _type(db, key).await,
+        RedisCommand::XAdd(key, id_tuple, fields) => streams::xadd(db, key, id_tuple, fields).await,
+        RedisCommand::XRange(key, start, stop) => streams::xrange(db, key, start, stop).await,
+        RedisCommand::XRead(streams, timeout) => match timeout {
+            Some(timeout) => streams::xread_block(db, streams, timeout).await,
+            None => streams::xread(db, streams).await,
+        },
+        RedisCommand::Incr(key) => incr(db, key).await,
+        RedisCommand::Multi => unreachable!(),
+        RedisCommand::Exec => unreachable!(),
+        RedisCommand::Discard => unreachable!(),
+        RedisCommand::Info(section) => info(db, section).await,
+        RedisCommand::ReplConf(key, value) => replication::replconf_resp(key, value).await,
+        RedisCommand::Psync(id, offset) => replication::psync_resp(db, id, offset).await,
+    }
+}
 
 pub fn ping() -> RedisValueRef {
     RSimpleString("PONG")

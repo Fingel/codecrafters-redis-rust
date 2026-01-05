@@ -7,7 +7,7 @@ use base64::prelude::*;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
-use tokio_util::codec::{Decoder, Framed};
+use tokio_util::codec::Framed;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReplicationError {
@@ -30,21 +30,14 @@ async fn get_next_response(
 }
 
 pub async fn handshake(
-    master_addr: String,
-    master_port: u16,
+    transport: &mut Framed<TcpStream, RespParser>,
     listen_port: u16,
 ) -> Result<(), ReplicationError> {
-    // Setup connection to master
-    let conn = TcpStream::connect((master_addr, master_port))
-        .await
-        .map_err(|_| ReplicationError::HandshakeFailed("Failed to connect to master".into()))?;
-    let mut transport = RespParser.framed(conn);
-
     // Start handshake - send PING and expect PONG
     transport
         .send(RedisCommand::Ping.try_into().unwrap())
         .await?;
-    let resp = get_next_response(&mut transport).await?;
+    let resp = get_next_response(transport).await?;
 
     if &resp.as_string().unwrap_or_default() != "PONG" {
         return Err(ReplicationError::HandshakeFailed(
@@ -61,7 +54,7 @@ pub async fn handshake(
         )
         .await?;
 
-    let resp = get_next_response(&mut transport).await?;
+    let resp = get_next_response(transport).await?;
 
     if &resp.as_string().unwrap_or_default() != "OK" {
         return Err(ReplicationError::HandshakeFailed(
@@ -78,7 +71,7 @@ pub async fn handshake(
         )
         .await?;
 
-    let resp = get_next_response(&mut transport).await?;
+    let resp = get_next_response(transport).await?;
 
     if &resp.as_string().unwrap_or_default() != "OK" {
         return Err(ReplicationError::HandshakeFailed(
@@ -91,7 +84,7 @@ pub async fn handshake(
         .send(RedisCommand::Psync("?".to_string(), -1).try_into().unwrap())
         .await?;
 
-    let resp = get_next_response(&mut transport).await?;
+    let resp = get_next_response(transport).await?;
 
     if !String::from_utf8_lossy(&resp.as_string().unwrap_or_default()).contains("FULLRESYNC") {
         return Err(ReplicationError::HandshakeFailed(

@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
-use codecrafters_redis::{
-    _type, Db, RedisDb, echo, get, incr, info, lists, ping, replication, set, set_ex, streams,
-};
+use codecrafters_redis::{Db, RedisDb, handle_command, replication};
 use codecrafters_redis::{
     interpreter::RedisCommand,
-    parser::{RArray, RError, RSimpleString, RedisValueRef, RespParser},
+    parser::{RArray, RError, RSimpleString, RespParser},
 };
 use futures::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -82,36 +80,6 @@ async fn process(stream: TcpStream, db: Db) {
     });
 }
 
-async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
-    match command {
-        RedisCommand::Ping => ping(),
-        RedisCommand::Echo(arg) => echo(arg),
-        RedisCommand::Set(key, value) => set(db, key, value).await,
-        RedisCommand::SetEx(key, value, ttl) => set_ex(db, key, value, ttl).await,
-        RedisCommand::Get(key) => get(db, key).await,
-        RedisCommand::Rpush(key, value) => lists::rpush(db, key, value).await,
-        RedisCommand::Lpush(key, value) => lists::lpush(db, key, value).await,
-        RedisCommand::Lrange(key, start, stop) => lists::lrange(db, key, start, stop).await,
-        RedisCommand::LLen(key) => lists::llen(db, key).await,
-        RedisCommand::LPop(key, num_elements) => lists::lpop(db, key, num_elements).await,
-        RedisCommand::BLPop(key, timeout) => lists::blpop(db, key, timeout).await,
-        RedisCommand::Type(key) => _type(db, key).await,
-        RedisCommand::XAdd(key, id_tuple, fields) => streams::xadd(db, key, id_tuple, fields).await,
-        RedisCommand::XRange(key, start, stop) => streams::xrange(db, key, start, stop).await,
-        RedisCommand::XRead(streams, timeout) => match timeout {
-            Some(timeout) => streams::xread_block(db, streams, timeout).await,
-            None => streams::xread(db, streams).await,
-        },
-        RedisCommand::Incr(key) => incr(db, key).await,
-        RedisCommand::Multi => unreachable!(),
-        RedisCommand::Exec => unreachable!(),
-        RedisCommand::Discard => unreachable!(),
-        RedisCommand::Info(section) => info(db, section).await,
-        RedisCommand::ReplConf(key, value) => replication::replconf_resp(key, value).await,
-        RedisCommand::Psync(id, offset) => replication::psync_resp(db, id, offset).await,
-    }
-}
-
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -138,9 +106,18 @@ async fn main() {
         .unwrap();
     let db = Arc::new(RedisDb::new(replica_of));
 
+    // Replication
     if let Some((master_addr, master_port)) = db.replica_of.clone() {
         tokio::spawn(async move {
-            if let Err(e) = replication::handshake(master_addr, master_port, port).await {
+            let stream = match TcpStream::connect((master_addr, master_port)).await {
+                Ok(stream) => stream,
+                Err(_) => {
+                    eprintln!("Failed to connect to master");
+                    std::process::exit(1);
+                }
+            };
+            let mut transport = RespParser.framed(stream);
+            if let Err(e) = replication::handshake(&mut transport, port).await {
                 eprintln!("Replication handshake failed: {}", e);
                 std::process::exit(1);
             }

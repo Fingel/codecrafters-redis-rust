@@ -1,4 +1,5 @@
 use crate::{
+    Db,
     interpreter::RedisCommand,
     parser::{RSimpleString, RedisValueRef, RespParser},
 };
@@ -89,15 +90,13 @@ pub async fn handshake(
         .send(RedisCommand::Psync("?".to_string(), -1).try_into().unwrap())
         .await?;
 
-    let _resp = get_next_response(&mut transport).await?;
+    let resp = get_next_response(&mut transport).await?;
 
-    // This needs to change to a string badly
-    // TODO check response
-    // if !&resp.as_string().unwrap_or_default().contains(&b'F') {
-    //     return Err(ReplicationError::HandshakeFailed(
-    //         "Didn't get a OK response for replconf capa".into(),
-    //     ));
-    // }
+    if !String::from_utf8_lossy(&resp.as_string().unwrap_or_default()).contains("FULLRESYNC") {
+        return Err(ReplicationError::HandshakeFailed(
+            "Didn't get a FULLRESYNC response for replconf capa".into(),
+        ));
+    }
 
     Ok(())
 }
@@ -106,6 +105,9 @@ pub async fn replconf_resp(_key: String, _value: String) -> RedisValueRef {
     RSimpleString("OK")
 }
 
-pub async fn psync_resp(_id: String, _offset: i64) -> RedisValueRef {
-    RSimpleString("FULLSYNC 0 0")
+pub async fn psync_resp(db: &Db, _id: String, _offset: i64) -> RedisValueRef {
+    // On handshake, id will be ? and offset will be -1
+    let repl_id = db.replication_id.clone();
+    let repl_offset = db.replication_offset;
+    RSimpleString(format!("FULLRESYNC {} {}", repl_id, repl_offset))
 }

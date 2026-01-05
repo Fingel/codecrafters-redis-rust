@@ -66,6 +66,12 @@ impl From<&str> for RedisValueRef {
     }
 }
 
+impl From<Vec<RedisValueRef>> for RedisValueRef {
+    fn from(v: Vec<RedisValueRef>) -> Self {
+        RedisValueRef::Array(v)
+    }
+}
+
 impl Display for RedisValueRef {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -357,7 +363,7 @@ mod tests {
     #[test]
     fn test_decode_ping() {
         let mut parser = RespParser;
-        let decoded = RedisValueRef::Array(vec!["PING".into()]);
+        let decoded: RedisValueRef = vec!["PING".into()].into();
         let mut out = BytesMut::new();
         parser.encode(decoded, &mut out).unwrap();
         assert_eq!(out, BytesMut::from("*1\r\n$4\r\nPING\r\n"));
@@ -369,7 +375,7 @@ mod tests {
         let mut parser = RespParser;
         let result = parser.decode(&mut encoded).unwrap();
 
-        let expected = Some(RedisValueRef::Array(vec!["ECHO".into(), "hey".into()]));
+        let expected: Option<RedisValueRef> = Some(vec!["ECHO".into(), "hey".into()].into());
 
         assert_eq!(result, expected);
     }
@@ -377,7 +383,7 @@ mod tests {
     #[test]
     fn test_encode_echo_hey() {
         let mut parser = RespParser;
-        let decoded = RedisValueRef::Array(vec!["ECHO".into(), "hey".into()]);
+        let decoded: RedisValueRef = vec!["ECHO".into(), "hey".into()].into();
         let mut out = BytesMut::new();
         parser.encode(decoded, &mut out).unwrap();
         assert_eq!(out, BytesMut::from("*2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n"));

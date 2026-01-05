@@ -126,8 +126,11 @@ pub async fn lrange(db: &Db, key: String, start: i64, stop: i64) -> RedisValueRe
         },
         None => vec![],
     };
-    let refs = bytes.into_iter().map(RedisValueRef::String).collect();
-    RedisValueRef::Array(refs)
+    bytes
+        .into_iter()
+        .map(RedisValueRef::String)
+        .collect::<Vec<RedisValueRef>>()
+        .into()
 }
 
 pub async fn llen(db: &Db, key: String) -> RedisValueRef {
@@ -152,7 +155,10 @@ pub async fn lpop(db: &Db, key: String, num_elements: Option<u64>) -> RedisValue
                     let response = if ret.len() == 1 {
                         RedisValueRef::String(ret[0].clone())
                     } else {
-                        RedisValueRef::Array(ret.into_iter().map(RedisValueRef::String).collect())
+                        ret.into_iter()
+                            .map(RedisValueRef::String)
+                            .collect::<Vec<RedisValueRef>>()
+                            .into()
                     };
 
                     Some((response, is_now_empty))
@@ -194,13 +200,13 @@ pub async fn blpop(db: &Db, key: String, timeout: Option<f64>) -> RedisValueRef 
                 rx.await.ok()
             };
             match res {
-                Some(val) => RedisValueRef::Array(vec![key.into(), RedisValueRef::String(val)]),
+                Some(val) => vec![key.into(), RedisValueRef::String(val)].into(),
                 None => RedisValueRef::NullArray,
             }
         }
         _ => {
             let val = lpop(db, key.clone(), Some(1)).await;
-            RedisValueRef::Array(vec![key.into(), val])
+            vec![key.into(), val].into()
         }
     }
 }
@@ -232,10 +238,8 @@ mod tests {
 
         // Get should return the list as an array
         let result = get(&db, key).await;
-        assert_eq!(
-            result,
-            RedisValueRef::Array(vec!["value1".into(), "value2".into(),])
-        );
+        let expected: RedisValueRef = vec!["value1".into(), "value2".into()].into();
+        assert_eq!(result, expected);
     }
 
     #[tokio::test]
@@ -268,10 +272,8 @@ mod tests {
 
         // Get should return the list as an array
         let result = get(&db, key).await;
-        assert_eq!(
-            result,
-            RedisValueRef::Array(vec!["value1".into(), "value2".into(),])
-        );
+        let expected: RedisValueRef = vec!["value1".into(), "value2".into()].into();
+        assert_eq!(result, expected);
     }
 
     #[tokio::test]
@@ -288,10 +290,8 @@ mod tests {
         assert_eq!(result, RedisValueRef::Int(3));
 
         let result = lrange(&db, key, 0, -1).await;
-        assert_eq!(
-            result,
-            RedisValueRef::Array(vec!["a".into(), "b".into(), "c".into(),])
-        );
+        let expected: RedisValueRef = vec!["a".into(), "b".into(), "c".into()].into();
+        assert_eq!(result, expected);
     }
 
     #[tokio::test]
@@ -308,10 +308,8 @@ mod tests {
         assert_eq!(result, RedisValueRef::Int(3));
 
         let result = lrange(&db, key, 0, 1).await;
-        assert_eq!(
-            result,
-            RedisValueRef::Array(vec!["value1".into(), "value2".into(),])
-        );
+        let expected: RedisValueRef = vec!["value1".into(), "value2".into()].into();
+        assert_eq!(result, expected);
     }
 
     #[tokio::test]
@@ -328,10 +326,9 @@ mod tests {
         assert_eq!(result, RedisValueRef::Int(3));
 
         let result = lrange(&db, key, 0, 10).await;
-        assert_eq!(
-            result,
-            RedisValueRef::Array(vec!["value1".into(), "value2".into(), "value3".into(),])
-        );
+        let expected: RedisValueRef =
+            vec!["value1".into(), "value2".into(), "value3".into()].into();
+        assert_eq!(result, expected);
     }
 
     #[tokio::test]
@@ -350,10 +347,8 @@ mod tests {
 
         // Matches example test on #RI1
         let result = lrange(&db, key, 2, -1).await;
-        assert_eq!(
-            result,
-            RedisValueRef::Array(vec!["c".into(), "d".into(), "e".into(),])
-        );
+        let expected: RedisValueRef = vec!["c".into(), "d".into(), "e".into()].into();
+        assert_eq!(result, expected);
     }
 
     #[tokio::test]
@@ -414,15 +409,18 @@ mod tests {
 
         // Matches example test on #JP1
         let result = lpop(&db, key.clone(), Some(2)).await;
-        assert_eq!(result, RedisValueRef::Array(vec!["a".into(), "b".into()]));
+        let expected: RedisValueRef = vec!["a".into(), "b".into()].into();
+        assert_eq!(result, expected);
 
         // List should now only contain c and d
         let result = lrange(&db, key.clone(), 0, -1).await;
-        assert_eq!(result, RedisValueRef::Array(vec!["c".into(), "d".into()]));
+        let expected: RedisValueRef = vec!["c".into(), "d".into()].into();
+        assert_eq!(result, expected);
 
         // Should remove all elements
         let result = lpop(&db, key.clone(), Some(100)).await;
-        assert_eq!(result, RedisValueRef::Array(vec!["c".into(), "d".into()]));
+        let expected: RedisValueRef = vec!["c".into(), "d".into()].into();
+        assert_eq!(result, expected);
     }
 
     #[tokio::test]

@@ -26,19 +26,17 @@ impl From<&RedisValue> for RedisValueRef {
     fn from(value: &RedisValue) -> Self {
         match value {
             RedisValue::String(s) => RedisValueRef::String(s.clone()),
-            RedisValue::List(items) => RedisValueRef::Array(
-                items
-                    .iter()
-                    .map(|item| RedisValueRef::String(item.clone()))
-                    .collect(),
-            ),
-            RedisValue::Stream(stream_collection) => RedisValueRef::Array(
-                stream_collection
-                    .all()
-                    .into_iter()
-                    .map(|e| e.into())
-                    .collect(),
-            ),
+            RedisValue::List(items) => items
+                .iter()
+                .map(|item| RedisValueRef::String(item.clone()))
+                .collect::<Vec<RedisValueRef>>()
+                .into(),
+            RedisValue::Stream(stream_collection) => stream_collection
+                .all()
+                .into_iter()
+                .map(|e| e.into())
+                .collect::<Vec<RedisValueRef>>()
+                .into(),
         }
     }
 }

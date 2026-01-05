@@ -120,12 +120,12 @@ impl TryFrom<RedisCommand> for RedisValueRef {
 
     fn try_from(cmd: RedisCommand) -> Result<Self, CmdError> {
         let value = match cmd {
-            RedisCommand::Ping => RedisValueRef::Array(vec!["PING".into()]),
+            RedisCommand::Ping => vec!["PING".into()].into(),
             RedisCommand::ReplConf(key, value) => {
-                RedisValueRef::Array(vec!["REPLCONF".into(), key.into(), value.into()])
+                vec!["REPLCONF".into(), key.into(), value.into()].into()
             }
             RedisCommand::Psync(id, offset) => {
-                RedisValueRef::Array(vec!["PSYNC".into(), id.into(), offset.to_string().into()])
+                vec!["PSYNC".into(), id.into(), offset.to_string().into()].into()
             }
             _ => {
                 return Err(CmdError::InvalidCommandType);
@@ -399,25 +399,23 @@ mod tests {
 
     #[test]
     fn test_ping() {
-        let command: RedisCommand = RedisValueRef::Array(vec!["PING".into()])
-            .try_into()
-            .unwrap();
+        let value: RedisValueRef = vec!["PING".into()].into();
+        let command: RedisCommand = value.try_into().unwrap();
 
         assert_eq!(command, RedisCommand::Ping);
     }
 
     #[test]
     fn test_echo() {
-        let command: RedisCommand = RedisValueRef::Array(vec!["ECHO".into(), "Hello".into()])
-            .try_into()
-            .unwrap();
+        let value: RedisValueRef = vec!["ECHO".into(), "Hello".into()].into();
+        let command: RedisCommand = value.try_into().unwrap();
 
         assert_eq!(command, RedisCommand::Echo("Hello".to_string()));
     }
 
     #[test]
     fn test_xadd() {
-        let command: RedisCommand = RedisValueRef::Array(vec![
+        let value: RedisValueRef = vec![
             "XADD".into(),
             "key".into(),
             "0-1".into(),
@@ -426,9 +424,9 @@ mod tests {
             "field2".into(),
             "value2".into(),
             "oops".into(), // Make sure extra args are ignored
-        ])
-        .try_into()
-        .unwrap();
+        ]
+        .into();
+        let command: RedisCommand = value.try_into().unwrap();
 
         assert_eq!(
             command,
@@ -445,41 +443,38 @@ mod tests {
 
     #[test]
     fn test_xadd_num_args() {
-        let error: Result<RedisCommand, CmdError> = RedisValueRef::Array(vec![
+        let value: RedisValueRef = vec![
             "XADD".into(),
             "key".into(),
             "0-1".into(),
             "field1".into(), // no value
-        ])
-        .try_into();
+        ]
+        .into();
+        let error: Result<RedisCommand, CmdError> = value.try_into();
 
         assert_eq!(error.unwrap_err(), CmdError::InvalidArgumentNum);
     }
 
     #[test]
     fn test_xadd_bad_id() {
-        let err: Result<RedisCommand, CmdError> = RedisValueRef::Array(vec![
+        let value: RedisValueRef = vec![
             "XADD".into(),
             "key".into(),
             "1-asdf".into(),
             "field1".into(),
             "value1".into(),
-        ])
-        .try_into();
+        ]
+        .into();
+        let err: Result<RedisCommand, CmdError> = value.try_into();
 
         assert_eq!(err.unwrap_err(), CmdError::InvalidArgument("id".into()));
     }
 
     #[test]
     fn test_xrange() {
-        let command: RedisCommand = RedisValueRef::Array(vec![
-            "XRANGE".into(),
-            "key".into(),
-            "1-0".into(),
-            "2-0".into(),
-        ])
-        .try_into()
-        .unwrap();
+        let value: RedisValueRef =
+            vec!["XRANGE".into(), "key".into(), "1-0".into(), "2-0".into()].into();
+        let command: RedisCommand = value.try_into().unwrap();
 
         assert_eq!(
             command,
@@ -490,16 +485,16 @@ mod tests {
     #[test]
     fn test_xread() {
         // XREAD streams stream1 stream2 1-0 2-0
-        let command: RedisCommand = RedisValueRef::Array(vec![
+        let value: RedisValueRef = vec![
             "XREAD".into(),
             "streams".into(),
             "stream1".into(),
             "stream2".into(),
             "1-0".into(),
             "2-0".into(),
-        ])
-        .try_into()
-        .unwrap();
+        ]
+        .into();
+        let command: RedisCommand = value.try_into().unwrap();
 
         assert_eq!(
             command,
@@ -516,7 +511,7 @@ mod tests {
     #[test]
     fn test_xread_block() {
         // XREAD streams stream1 stream2 1-0 2-0
-        let command: RedisCommand = RedisValueRef::Array(vec![
+        let value: RedisValueRef = vec![
             "XREAD".into(),
             "BLOCK".into(),
             "1000".into(),
@@ -525,9 +520,9 @@ mod tests {
             "stream2".into(),
             "1-0".into(),
             "2-0".into(),
-        ])
-        .try_into()
-        .unwrap();
+        ]
+        .into();
+        let command: RedisCommand = value.try_into().unwrap();
 
         assert_eq!(
             command,

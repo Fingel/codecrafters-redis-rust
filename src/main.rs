@@ -43,7 +43,7 @@ async fn process(stream: TcpStream, db: Db) {
                                     results.push(result);
                                 }
 
-                                transport.send(RedisValueRef::Array(results)).await.unwrap();
+                                transport.send(results.into()).await.unwrap();
                             } else {
                                 let resp =
                                     RedisValueRef::Error(Bytes::from("ERR EXEC without MULTI"));

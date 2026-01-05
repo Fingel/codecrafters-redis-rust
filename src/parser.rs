@@ -31,6 +31,7 @@ pub enum RedisValueRef {
     Array(Vec<RedisValueRef>),
     NullArray,
     NullBulkString,
+    RDBFile(Bytes),
     ErrorMsg(Vec<u8>), // This is not a RESP type. This is an redis-oxide internal error type.
 }
 
@@ -117,6 +118,7 @@ impl Display for RedisValueRef {
             RedisValueRef::NullArray => write!(f, "NullArray"),
             RedisValueRef::NullBulkString => write!(f, "NullBulkString"),
             RedisValueRef::ErrorMsg(e) => write!(f, "ErrorMsg: {}", String::from_utf8_lossy(e)),
+            RedisValueRef::RDBFile(_file) => write!(f, "RDBFile"),
         }
     }
 }
@@ -380,6 +382,12 @@ fn write_redis_value(item: RedisValueRef, dst: &mut BytesMut) {
         }
         RedisValueRef::NullArray => dst.extend_from_slice(NULL_ARRAY.as_bytes()),
         RedisValueRef::NullBulkString => dst.extend_from_slice(NULL_BULK_STRING.as_bytes()),
+        RedisValueRef::RDBFile(file) => {
+            dst.extend_from_slice(b"$");
+            dst.extend_from_slice(file.len().to_string().as_bytes());
+            dst.extend_from_slice(b"\r\n");
+            dst.extend_from_slice(&file);
+        }
     }
 }
 

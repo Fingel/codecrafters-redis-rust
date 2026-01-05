@@ -3,7 +3,8 @@ use crate::{
     interpreter::RedisCommand,
     parser::{RSimpleString, RedisValueRef, RespParser},
 };
-
+use base64::prelude::*;
+use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Decoder, Framed};
@@ -105,9 +106,14 @@ pub async fn replconf_resp(_key: String, _value: String) -> RedisValueRef {
     RSimpleString("OK")
 }
 
-pub async fn psync_resp(db: &Db, _id: String, _offset: i64) -> RedisValueRef {
+pub async fn psync_resp(db: &Db, _id: String, _offset: i64) -> Vec<RedisValueRef> {
     // On handshake, id will be ? and offset will be -1
     let repl_id = db.replication_id.clone();
     let repl_offset = db.replication_offset;
-    RSimpleString(format!("FULLRESYNC {} {}", repl_id, repl_offset))
+    let empty_file_bytes = b"UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==";
+    let empty_file = BASE64_STANDARD.decode(empty_file_bytes).unwrap();
+    vec![
+        RSimpleString(format!("FULLRESYNC {} {}", repl_id, repl_offset)),
+        RedisValueRef::RDBFile(Bytes::from(empty_file)),
+    ]
 }

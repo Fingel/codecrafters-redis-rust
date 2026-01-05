@@ -120,6 +120,7 @@ async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Discard => unreachable!(),
         RedisCommand::Info(section) => info(db, section).await,
         RedisCommand::ReplConf(key, value) => replication::replconf_resp(key, value).await,
+        RedisCommand::Psync(id, offset) => replication::psync_resp(id, offset).await,
     }
 }
 

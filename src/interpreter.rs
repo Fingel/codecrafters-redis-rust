@@ -26,6 +26,7 @@ pub enum RedisCommand {
     Discard,
     Info(Bytes),
     ReplConf(Bytes, Bytes),
+    Psync(Bytes, i64),
 }
 
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -59,23 +60,12 @@ fn extract_lossy_string_arg(arg: &RedisValueRef, field_name: &str) -> Result<Str
     Ok(String::from_utf8_lossy(&bytes_val).to_string())
 }
 
-fn extract_integer_arg(arg: &RedisValueRef, field_name: &str) -> Result<i64, CmdError> {
+fn extract_parse_arg<T>(arg: &RedisValueRef, field_name: &str) -> Result<T, CmdError>
+where
+    T: std::str::FromStr,
+{
     let string_val = extract_lossy_string_arg(arg, field_name)?;
-    string_val.parse::<i64>().map_err(|_| CmdError::ParseError {
-        field: field_name.to_string(),
-    })
-}
-
-fn extract_u64_arg(arg: &RedisValueRef, field_name: &str) -> Result<u64, CmdError> {
-    let string_val = extract_lossy_string_arg(arg, field_name)?;
-    string_val.parse::<u64>().map_err(|_| CmdError::ParseError {
-        field: field_name.to_string(),
-    })
-}
-
-fn extract_f64_arg(arg: &RedisValueRef, field_name: &str) -> Result<f64, CmdError> {
-    let string_val = extract_lossy_string_arg(arg, field_name)?;
-    string_val.parse::<f64>().map_err(|_| CmdError::ParseError {
+    string_val.parse::<T>().map_err(|_| CmdError::ParseError {
         field: field_name.to_string(),
     })
 }
@@ -120,6 +110,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "DISCARD" => Ok(RedisCommand::Discard),
                     "INFO" => info(&args),
                     "REPLCONF" => replconf(&args),
+                    "PSYNC" => psync(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -140,6 +131,11 @@ impl TryFrom<RedisCommand> for RedisValueRef {
                 RedisValueRef::String(Bytes::from("REPLCONF")),
                 RedisValueRef::String(key),
                 RedisValueRef::String(value),
+            ]),
+            RedisCommand::Psync(id, offset) => RedisValueRef::Array(vec![
+                RedisValueRef::String(Bytes::from("PSYNC")),
+                RedisValueRef::String(id),
+                RedisValueRef::String(Bytes::from(offset.to_string())),
             ]),
             _ => {
                 return Err(CmdError::InvalidCommandType);
@@ -167,7 +163,7 @@ fn set(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         3 => Ok(RedisCommand::Set(key, value)),
         5 => {
             let ttl_type = extract_lossy_string_arg(&args[3], "ttl type")?;
-            let ttl_arg = extract_u64_arg(&args[4], "ttl value")?;
+            let ttl_arg: u64 = extract_parse_arg(&args[4], "ttl value")?;
             let ttl_val = match ttl_type.as_str() {
                 "EX" => ttl_arg * 1000,
                 "PX" => ttl_arg,
@@ -223,8 +219,8 @@ fn lrange(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         Err(CmdError::InvalidArgumentNum)
     } else {
         let key = extract_string_arg(&args[1], "key")?;
-        let start = extract_integer_arg(&args[2], "start")?;
-        let stop = extract_integer_arg(&args[3], "stop")?;
+        let start: i64 = extract_parse_arg(&args[2], "start")?;
+        let stop: i64 = extract_parse_arg(&args[3], "stop")?;
         Ok(RedisCommand::Lrange(key, start, stop))
     }
 }
@@ -244,7 +240,7 @@ fn lpop(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
     } else {
         let key = extract_string_arg(&args[1], "key")?;
         args.get(2)
-            .map(|num_elements| extract_u64_arg(num_elements, "num_elements"))
+            .map(|num_elements| extract_parse_arg::<u64>(num_elements, "num_elements"))
             .transpose()
             .map(|num_elements| RedisCommand::LPop(key, num_elements))
     }
@@ -256,7 +252,7 @@ fn blpop(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
     } else {
         let key = extract_string_arg(&args[1], "key")?;
         args.get(2)
-            .map(|timeout| extract_f64_arg(timeout, "timeout"))
+            .map(|timeout| extract_parse_arg::<f64>(timeout, "timeout"))
             .transpose()
             .map(|timeout| RedisCommand::BLPop(key, timeout))
     }
@@ -335,11 +331,12 @@ fn xread(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
     if args.len() < 4 {
         Err(CmdError::InvalidArgumentNum)
     } else {
-        let timeout = if extract_lossy_string_arg(&args[1], "block")?.to_uppercase() == "BLOCK" {
-            Some(extract_u64_arg(&args[2], "block-timeout")?)
-        } else {
-            None
-        };
+        let timeout: Option<u64> =
+            if extract_lossy_string_arg(&args[1], "block")?.to_uppercase() == "BLOCK" {
+                Some(extract_parse_arg(&args[2], "block-timeout")?)
+            } else {
+                None
+            };
         let streams_start = args
             .iter()
             .position(|arg| {
@@ -393,6 +390,16 @@ fn replconf(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         let key = extract_string_arg(&args[1], "key")?;
         let value = extract_string_arg(&args[2], "value")?;
         Ok(RedisCommand::ReplConf(key, value))
+    }
+}
+
+fn psync(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 3 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let id = extract_string_arg(&args[1], "id")?;
+        let offset: i64 = extract_parse_arg(&args[2], "offset")?;
+        Ok(RedisCommand::Psync(id, offset))
     }
 }
 

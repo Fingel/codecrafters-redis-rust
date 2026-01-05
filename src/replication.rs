@@ -87,9 +87,32 @@ pub async fn handshake(
         ));
     }
 
+    // Send PSYNC command
+    transport
+        .send(
+            RedisCommand::Psync(Bytes::from("?"), -1)
+                .try_into()
+                .unwrap(),
+        )
+        .await?;
+
+    let _resp = get_next_response(&mut transport).await?;
+
+    // This needs to change to a string badly
+    // TODO check response
+    // if !&resp.as_string().unwrap_or_default().contains(&b'F') {
+    //     return Err(ReplicationError::HandshakeFailed(
+    //         "Didn't get a OK response for replconf capa".into(),
+    //     ));
+    // }
+
     Ok(())
 }
 
 pub async fn replconf_resp(_key: Bytes, _value: Bytes) -> RedisValueRef {
     RedisValueRef::SimpleString("OK".into())
+}
+
+pub async fn psync_resp(_id: Bytes, _offset: i64) -> RedisValueRef {
+    RedisValueRef::SimpleString("FULLSYNC 0 0".into())
 }

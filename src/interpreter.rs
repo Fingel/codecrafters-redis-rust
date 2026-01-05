@@ -6,27 +6,27 @@ use crate::{parser::RedisValueRef, streams::StreamIdIn};
 #[derive(Debug, PartialEq)]
 pub enum RedisCommand {
     Ping,
-    Echo(Bytes),
-    Set(Bytes, Bytes),
-    SetEx(Bytes, Bytes, u64),
-    Get(Bytes),
-    Rpush(Bytes, Vec<Bytes>),
-    Lpush(Bytes, Vec<Bytes>),
-    Lrange(Bytes, i64, i64),
-    LLen(Bytes),
-    LPop(Bytes, Option<u64>),
-    BLPop(Bytes, Option<f64>),
-    Type(Bytes),
-    XAdd(Bytes, StreamIdIn, Vec<(Bytes, Bytes)>),
-    XRange(Bytes, StreamIdIn, StreamIdIn),
-    XRead(Vec<(Bytes, StreamIdIn)>, Option<u64>),
-    Incr(Bytes),
+    Echo(String),
+    Set(String, String),
+    SetEx(String, String, u64),
+    Get(String),
+    Rpush(String, Vec<String>),
+    Lpush(String, Vec<String>),
+    Lrange(String, i64, i64),
+    LLen(String),
+    LPop(String, Option<u64>),
+    BLPop(String, Option<f64>),
+    Type(String),
+    XAdd(String, StreamIdIn, Vec<(String, String)>),
+    XRange(String, StreamIdIn, StreamIdIn),
+    XRead(Vec<(String, StreamIdIn)>, Option<u64>),
+    Incr(String),
     Multi,
     Exec,
     Discard,
-    Info(Bytes),
-    ReplConf(Bytes, Bytes),
-    Psync(Bytes, i64),
+    Info(String),
+    ReplConf(String, String),
+    Psync(String, i64),
 }
 
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -47,16 +47,13 @@ pub enum CmdError {
     ParseError { field: String },
 }
 
-fn extract_string_arg(arg: &RedisValueRef, field_name: &str) -> Result<Bytes, CmdError> {
-    arg.clone()
+fn extract_string_arg(arg: &RedisValueRef, field_name: &str) -> Result<String, CmdError> {
+    let bytes_val = arg
+        .clone()
         .as_string()
         .map_err(|_| CmdError::InvalidStringArg {
             field: field_name.to_string(),
-        })
-}
-
-fn extract_lossy_string_arg(arg: &RedisValueRef, field_name: &str) -> Result<String, CmdError> {
-    let bytes_val = extract_string_arg(arg, field_name)?;
+        })?;
     Ok(String::from_utf8_lossy(&bytes_val).to_string())
 }
 
@@ -64,7 +61,7 @@ fn extract_parse_arg<T>(arg: &RedisValueRef, field_name: &str) -> Result<T, CmdE
 where
     T: std::str::FromStr,
 {
-    let string_val = extract_lossy_string_arg(arg, field_name)?;
+    let string_val = extract_string_arg(arg, field_name)?;
     string_val.parse::<T>().map_err(|_| CmdError::ParseError {
         field: field_name.to_string(),
     })
@@ -129,12 +126,12 @@ impl TryFrom<RedisCommand> for RedisValueRef {
             }
             RedisCommand::ReplConf(key, value) => RedisValueRef::Array(vec![
                 RedisValueRef::String(Bytes::from("REPLCONF")),
-                RedisValueRef::String(key),
-                RedisValueRef::String(value),
+                RedisValueRef::String(Bytes::from(key)),
+                RedisValueRef::String(Bytes::from(value)),
             ]),
             RedisCommand::Psync(id, offset) => RedisValueRef::Array(vec![
                 RedisValueRef::String(Bytes::from("PSYNC")),
-                RedisValueRef::String(id),
+                RedisValueRef::String(Bytes::from(id)),
                 RedisValueRef::String(Bytes::from(offset.to_string())),
             ]),
             _ => {
@@ -149,7 +146,7 @@ fn echo(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
     if args.len() < 2 {
         Err(CmdError::InvalidArgumentNum)
     } else {
-        Ok(RedisCommand::Echo(Bytes::from(args[1].to_string())))
+        Ok(RedisCommand::Echo(args[1].to_string()))
     }
 }
 
@@ -162,7 +159,7 @@ fn set(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
     match args.len() {
         3 => Ok(RedisCommand::Set(key, value)),
         5 => {
-            let ttl_type = extract_lossy_string_arg(&args[3], "ttl type")?;
+            let ttl_type = extract_string_arg(&args[3], "ttl type")?;
             let ttl_arg: u64 = extract_parse_arg(&args[4], "ttl value")?;
             let ttl_val = match ttl_type.as_str() {
                 "EX" => ttl_arg * 1000,
@@ -189,7 +186,7 @@ fn rpush(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         Err(CmdError::InvalidArgumentNum)
     } else {
         let key = extract_string_arg(&args[1], "key")?;
-        let values: Result<Vec<Bytes>, CmdError> = args[2..]
+        let values: Result<Vec<String>, CmdError> = args[2..]
             .iter()
             .enumerate()
             .map(|(i, arg)| extract_string_arg(arg, &format!("value[{}]", i)))
@@ -204,7 +201,7 @@ fn lpush(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         Err(CmdError::InvalidArgumentNum)
     } else {
         let key = extract_string_arg(&args[1], "key")?;
-        let values: Result<Vec<Bytes>, CmdError> = args[2..]
+        let values: Result<Vec<String>, CmdError> = args[2..]
             .iter()
             .enumerate()
             .map(|(i, arg)| extract_string_arg(arg, &format!("value[{}]", i)))
@@ -299,7 +296,7 @@ fn xadd(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         Err(CmdError::InvalidArgumentNum)
     } else {
         let key = extract_string_arg(&args[1], "key")?;
-        let id = extract_lossy_string_arg(&args[2], "id")?;
+        let id = extract_string_arg(&args[2], "id")?;
         let id_tuple = parse_stream_id(&id)?;
         let fields = args[3..]
             .chunks_exact(2)
@@ -308,7 +305,7 @@ fn xadd(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
                 let value = extract_string_arg(&chunk[1], "value")?;
                 Ok((field, value))
             })
-            .collect::<Result<Vec<(Bytes, Bytes)>, CmdError>>()?;
+            .collect::<Result<Vec<(String, String)>, CmdError>>()?;
         Ok(RedisCommand::XAdd(key, id_tuple, fields))
     }
 }
@@ -318,8 +315,8 @@ fn xrange(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         Err(CmdError::InvalidArgumentNum)
     } else {
         let key = extract_string_arg(&args[1], "key")?;
-        let start = extract_lossy_string_arg(&args[2], "start")?;
-        let end = extract_lossy_string_arg(&args[3], "end")?;
+        let start = extract_string_arg(&args[2], "start")?;
+        let end = extract_string_arg(&args[3], "end")?;
         let start_parsed = parse_stream_id(&start)?;
         let end_parsed = parse_stream_id(&end)?;
         Ok(RedisCommand::XRange(key, start_parsed, end_parsed))
@@ -332,7 +329,7 @@ fn xread(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         Err(CmdError::InvalidArgumentNum)
     } else {
         let timeout: Option<u64> =
-            if extract_lossy_string_arg(&args[1], "block")?.to_uppercase() == "BLOCK" {
+            if extract_string_arg(&args[1], "block")?.to_uppercase() == "BLOCK" {
                 Some(extract_parse_arg(&args[2], "block-timeout")?)
             } else {
                 None
@@ -340,7 +337,7 @@ fn xread(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         let streams_start = args
             .iter()
             .position(|arg| {
-                extract_lossy_string_arg(arg, "streams")
+                extract_string_arg(arg, "streams")
                     .unwrap_or_default()
                     .to_uppercase()
                     == "STREAMS"
@@ -351,15 +348,15 @@ fn xread(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         let stream_keys = streams_section[..mid]
             .iter()
             .map(|arg| extract_string_arg(arg, "stream_id"))
-            .collect::<Result<Vec<Bytes>, CmdError>>()?;
+            .collect::<Result<Vec<String>, CmdError>>()?;
         let stream_ids = streams_section[mid..]
             .iter()
             .map(|arg| {
-                let id = extract_lossy_string_arg(arg, "stream_id")?;
+                let id = extract_string_arg(arg, "stream_id")?;
                 parse_stream_id(&id)
             })
             .collect::<Result<Vec<StreamIdIn>, CmdError>>()?;
-        let streams: Vec<(Bytes, StreamIdIn)> = stream_keys.into_iter().zip(stream_ids).collect();
+        let streams: Vec<(String, StreamIdIn)> = stream_keys.into_iter().zip(stream_ids).collect();
         Ok(RedisCommand::XRead(streams, timeout))
     }
 }
@@ -377,7 +374,7 @@ fn info(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
     let section = if args.len() > 1 {
         extract_string_arg(&args[1], "section")?
     } else {
-        Bytes::from("all".to_string())
+        "all".to_string()
     };
 
     Ok(RedisCommand::Info(section))
@@ -428,7 +425,7 @@ mod tests {
         .try_into()
         .unwrap();
 
-        assert_eq!(command, RedisCommand::Echo(Bytes::from("Hello")));
+        assert_eq!(command, RedisCommand::Echo("Hello".to_string()));
     }
 
     #[test]
@@ -449,11 +446,11 @@ mod tests {
         assert_eq!(
             command,
             RedisCommand::XAdd(
-                Bytes::from("key"),
+                "key".to_string(),
                 (Some(0), Some(1)),
                 vec![
-                    (Bytes::from("field1"), Bytes::from("value1")),
-                    (Bytes::from("field2"), Bytes::from("value2"))
+                    ("field1".to_string(), "value1".to_string()),
+                    ("field2".to_string(), "value2".to_string())
                 ]
             )
         );
@@ -499,7 +496,7 @@ mod tests {
 
         assert_eq!(
             command,
-            RedisCommand::XRange(Bytes::from("key"), (Some(1), Some(0)), (Some(2), Some(0)),)
+            RedisCommand::XRange("key".to_string(), (Some(1), Some(0)), (Some(2), Some(0)),)
         );
     }
 
@@ -521,8 +518,8 @@ mod tests {
             command,
             RedisCommand::XRead(
                 vec![
-                    (Bytes::from("stream1"), (Some(1), Some(0))),
-                    (Bytes::from("stream2"), (Some(2), Some(0))),
+                    ("stream1".to_string(), (Some(1), Some(0))),
+                    ("stream2".to_string(), (Some(2), Some(0))),
                 ],
                 None
             )
@@ -549,8 +546,8 @@ mod tests {
             command,
             RedisCommand::XRead(
                 vec![
-                    (Bytes::from("stream1"), (Some(1), Some(0))),
-                    (Bytes::from("stream2"), (Some(2), Some(0))),
+                    ("stream1".to_string(), (Some(1), Some(0))),
+                    ("stream2".to_string(), (Some(2), Some(0))),
                 ],
                 Some(1000)
             )

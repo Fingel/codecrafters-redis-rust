@@ -2,7 +2,7 @@ use crate::{
     interpreter::RedisCommand,
     parser::{RedisValueRef, RespParser},
 };
-use bytes::Bytes;
+
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Decoder, Framed};
@@ -53,12 +53,9 @@ pub async fn handshake(
     // Send REPLCONF listening-port and expect OK
     transport
         .send(
-            RedisCommand::ReplConf(
-                Bytes::from("listening-port"),
-                Bytes::from(listen_port.to_string()),
-            )
-            .try_into()
-            .unwrap(),
+            RedisCommand::ReplConf("listening-port".to_string(), listen_port.to_string())
+                .try_into()
+                .unwrap(),
         )
         .await?;
 
@@ -73,7 +70,7 @@ pub async fn handshake(
     // Send REPLCONF capa and expect OK
     transport
         .send(
-            RedisCommand::ReplConf(Bytes::from("capa"), Bytes::from("psync2"))
+            RedisCommand::ReplConf("capa".to_string(), "psync2".to_string())
                 .try_into()
                 .unwrap(),
         )
@@ -89,11 +86,7 @@ pub async fn handshake(
 
     // Send PSYNC command
     transport
-        .send(
-            RedisCommand::Psync(Bytes::from("?"), -1)
-                .try_into()
-                .unwrap(),
-        )
+        .send(RedisCommand::Psync("?".to_string(), -1).try_into().unwrap())
         .await?;
 
     let _resp = get_next_response(&mut transport).await?;
@@ -109,10 +102,10 @@ pub async fn handshake(
     Ok(())
 }
 
-pub async fn replconf_resp(_key: Bytes, _value: Bytes) -> RedisValueRef {
+pub async fn replconf_resp(_key: String, _value: String) -> RedisValueRef {
     RedisValueRef::SimpleString("OK".into())
 }
 
-pub async fn psync_resp(_id: Bytes, _offset: i64) -> RedisValueRef {
+pub async fn psync_resp(_id: String, _offset: i64) -> RedisValueRef {
     RedisValueRef::SimpleString("FULLSYNC 0 0".into())
 }

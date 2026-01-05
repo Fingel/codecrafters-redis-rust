@@ -47,9 +47,9 @@ async fn notify_waiters(db: &Db, key: &str) {
     }
 }
 
-pub async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
-    let key_string = String::from_utf8_lossy(&key).to_string();
-    let result = match db.dict.get_mut(&key_string) {
+pub async fn rpush(db: &Db, key: String, value: Vec<String>) -> RedisValueRef {
+    let value: Vec<Bytes> = value.into_iter().map(Bytes::from).collect();
+    let result = match db.dict.get_mut(&key) {
         Some(mut entry) => match &mut *entry {
             RedisValue::List(list) => {
                 list.extend(value.clone());
@@ -61,18 +61,17 @@ pub async fn rpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
         },
         None => {
             let num_items = value.len() as i64;
-            db.dict
-                .insert(key_string.clone(), RedisValue::List(value.into()));
+            db.dict.insert(key.clone(), RedisValue::List(value.into()));
             RedisValueRef::Int(num_items)
         }
     };
-    notify_waiters(db, &key_string).await;
+    notify_waiters(db, &key).await;
     result
 }
 
-pub async fn lpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
-    let key_string = String::from_utf8_lossy(&key).to_string();
-    let result = match db.dict.get_mut(&key_string) {
+pub async fn lpush(db: &Db, key: String, value: Vec<String>) -> RedisValueRef {
+    let value: Vec<Bytes> = value.into_iter().map(Bytes::from).collect();
+    let result = match db.dict.get_mut(&key) {
         Some(mut entry) => match &mut *entry {
             RedisValue::List(list) => {
                 for item in value.into_iter() {
@@ -86,19 +85,16 @@ pub async fn lpush(db: &Db, key: Bytes, value: Vec<Bytes>) -> RedisValueRef {
         },
         None => {
             let num_items = value.len() as i64;
-            db.dict
-                .insert(key_string.clone(), RedisValue::List(value.into()));
+            db.dict.insert(key.clone(), RedisValue::List(value.into()));
             RedisValueRef::Int(num_items)
         }
     };
-    notify_waiters(db, &key_string).await;
+    notify_waiters(db, &key).await;
     result
 }
 
-pub async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef {
-    let key_string = String::from_utf8_lossy(&key).to_string();
-
-    let bytes: Vec<Bytes> = match db.get_if_valid(&key_string) {
+pub async fn lrange(db: &Db, key: String, start: i64, stop: i64) -> RedisValueRef {
+    let bytes: Vec<Bytes> = match db.get_if_valid(&key) {
         Some(entry) => match &*entry {
             RedisValue::List(list) => {
                 let list_len = list.len() as i64;
@@ -134,9 +130,8 @@ pub async fn lrange(db: &Db, key: Bytes, start: i64, stop: i64) -> RedisValueRef
     RedisValueRef::Array(refs)
 }
 
-pub async fn llen(db: &Db, key: Bytes) -> RedisValueRef {
-    let key_string = String::from_utf8_lossy(&key).to_string();
-    match db.get_if_valid(&key_string) {
+pub async fn llen(db: &Db, key: String) -> RedisValueRef {
+    match db.get_if_valid(&key) {
         Some(entry) => match &*entry {
             RedisValue::List(list) => RedisValueRef::Int(list.len() as i64),
             _ => RedisValueRef::Int(0),
@@ -145,10 +140,9 @@ pub async fn llen(db: &Db, key: Bytes) -> RedisValueRef {
     }
 }
 
-pub async fn lpop(db: &Db, key: Bytes, num_elements: Option<u64>) -> RedisValueRef {
-    let key_string = String::from_utf8_lossy(&key).to_string();
+pub async fn lpop(db: &Db, key: String, num_elements: Option<u64>) -> RedisValueRef {
     let result = {
-        match db.get_mut_if_valid(&key_string) {
+        match db.get_mut_if_valid(&key) {
             Some(mut entry) => match &mut *entry {
                 RedisValue::List(list) if !list.is_empty() => {
                     let num_elements = (num_elements.unwrap_or(1) as usize).min(list.len());
@@ -172,7 +166,7 @@ pub async fn lpop(db: &Db, key: Bytes, num_elements: Option<u64>) -> RedisValueR
     // Handle the result and potentially remove the key
     match result {
         Some((response, true)) => {
-            db.dict.remove(&key_string);
+            db.dict.remove(&key);
             response
         }
         Some((response, false)) => response,
@@ -181,16 +175,15 @@ pub async fn lpop(db: &Db, key: Bytes, num_elements: Option<u64>) -> RedisValueR
 }
 
 // blocking lpop
-pub async fn blpop(db: &Db, key: Bytes, timeout: Option<f64>) -> RedisValueRef {
+pub async fn blpop(db: &Db, key: String, timeout: Option<f64>) -> RedisValueRef {
     let timeout = timeout.unwrap_or(0.0);
-    let key_string = String::from_utf8_lossy(&key).to_string();
     let exists = get(db, key.clone()).await;
     match exists {
         RedisValueRef::NullBulkString => {
             let (tx, rx) = tokio::sync::oneshot::channel();
             {
                 let mut waiters = db.waiters.lock().unwrap();
-                waiters.entry(key_string.clone()).or_default().push_back(tx);
+                waiters.entry(key.clone()).or_default().push_back(tx);
             }
             let res = if timeout > 0.0 {
                 tokio::time::timeout(Duration::from_millis((timeout * 1000.0) as u64), rx)
@@ -202,7 +195,7 @@ pub async fn blpop(db: &Db, key: Bytes, timeout: Option<f64>) -> RedisValueRef {
             };
             match res {
                 Some(val) => RedisValueRef::Array(vec![
-                    RedisValueRef::String(key),
+                    RedisValueRef::String(Bytes::from(key)),
                     RedisValueRef::String(val),
                 ]),
                 None => RedisValueRef::NullArray,
@@ -210,7 +203,7 @@ pub async fn blpop(db: &Db, key: Bytes, timeout: Option<f64>) -> RedisValueRef {
         }
         _ => {
             let val = lpop(db, key.clone(), Some(1)).await;
-            RedisValueRef::Array(vec![RedisValueRef::String(key), val])
+            RedisValueRef::Array(vec![RedisValueRef::String(Bytes::from(key)), val])
         }
     }
 }
@@ -229,14 +222,14 @@ mod tests {
     #[tokio::test]
     async fn test_rpush_new_list() {
         let db = setup();
-        let key = Bytes::from("key");
-        let value = vec![Bytes::from("value1")];
+        let key = "key".to_string();
+        let value = vec!["value1".to_string()];
 
         let result = rpush(&db, key.clone(), value).await;
         assert_eq!(result, RedisValueRef::Int(1));
 
         // Push another item
-        let value2 = vec![Bytes::from("value2")];
+        let value2 = vec!["value2".to_string()];
         let result = rpush(&db, key.clone(), value2).await;
         assert_eq!(result, RedisValueRef::Int(2));
 
@@ -254,15 +247,15 @@ mod tests {
     #[tokio::test]
     async fn test_rpush_wrong_type() {
         let db = setup();
-        let key = Bytes::from("key");
-        let value = Bytes::from("string_value");
+        let key = "key".to_string();
+        let value = "string_value".to_string();
 
         // Set a string value
         let result = set(&db, key.clone(), value).await;
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
 
         // Try to rpush to a string key - should fail
-        let list_value = vec![Bytes::from("list_item")];
+        let list_value = vec!["list_item".to_string()];
         let result = rpush(&db, key, list_value).await;
         match result {
             RedisValueRef::Error(_) => {} // Expected
@@ -273,8 +266,8 @@ mod tests {
     #[tokio::test]
     async fn test_rpush_multiple() {
         let db = setup();
-        let key = Bytes::from("key");
-        let value = vec![Bytes::from("value1"), Bytes::from("value2")];
+        let key = "key".to_string();
+        let value = vec!["value1".to_string(), "value2".to_string()];
 
         let result = rpush(&db, key.clone(), value).await;
         assert_eq!(result, RedisValueRef::Int(2));
@@ -293,13 +286,13 @@ mod tests {
     #[tokio::test]
     async fn test_lpush() {
         let db = setup();
-        let key = Bytes::from("key");
-        let value = vec![Bytes::from("c")];
+        let key = "key".to_string();
+        let value = vec!["c".to_string()];
 
         let result = lpush(&db, key.clone(), value).await;
         assert_eq!(result, RedisValueRef::Int(1));
 
-        let value = vec![Bytes::from("b"), Bytes::from("a")];
+        let value = vec!["b".to_string(), "a".to_string()];
         let result = lpush(&db, key.clone(), value).await;
         assert_eq!(result, RedisValueRef::Int(3));
 
@@ -317,16 +310,16 @@ mod tests {
     #[tokio::test]
     async fn test_lrange() {
         let db = setup();
-        let key = Bytes::from("key");
+        let key = "key".to_string();
         let value = vec![
-            Bytes::from("value1"),
-            Bytes::from("value2"),
-            Bytes::from("value3"),
+            "value1".to_string(),
+            "value2".to_string(),
+            "value3".to_string(),
         ];
+
         let result = rpush(&db, key.clone(), value).await;
         assert_eq!(result, RedisValueRef::Int(3));
 
-        // Get should return the first two items
         let result = lrange(&db, key, 0, 1).await;
         assert_eq!(
             result,
@@ -340,16 +333,16 @@ mod tests {
     #[tokio::test]
     async fn test_lrange_large_upper() {
         let db = setup();
-        let key = Bytes::from("key");
+        let key = "key".to_string();
         let value = vec![
-            Bytes::from("value1"),
-            Bytes::from("value2"),
-            Bytes::from("value3"),
+            "value1".to_string(),
+            "value2".to_string(),
+            "value3".to_string(),
         ];
+
         let result = rpush(&db, key.clone(), value).await;
         assert_eq!(result, RedisValueRef::Int(3));
 
-        // Get should return all
         let result = lrange(&db, key, 0, 10).await;
         assert_eq!(
             result,
@@ -364,13 +357,13 @@ mod tests {
     #[tokio::test]
     async fn test_lrange_negative() {
         let db = setup();
-        let key = Bytes::from("key");
+        let key = "key".to_string();
         let value = vec![
-            Bytes::from("a"),
-            Bytes::from("b"),
-            Bytes::from("c"),
-            Bytes::from("d"),
-            Bytes::from("e"),
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+            "e".to_string(),
         ];
         let result = rpush(&db, key.clone(), value).await;
         assert_eq!(result, RedisValueRef::Int(5));
@@ -390,12 +383,12 @@ mod tests {
     #[tokio::test]
     async fn test_llen() {
         let db = setup();
-        let key = Bytes::from("key");
+        let key = "key".to_string();
         let value = vec![
-            Bytes::from("a"),
-            Bytes::from("b"),
-            Bytes::from("c"),
-            Bytes::from("d"),
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
         ];
         let result = rpush(&db, key.clone(), value).await;
         assert_eq!(result, RedisValueRef::Int(4));
@@ -405,15 +398,15 @@ mod tests {
         assert_eq!(result, RedisValueRef::Int(4));
 
         // Non-existent key
-        let result = llen(&db, Bytes::from("nonexistent")).await;
+        let result = llen(&db, "nonexistent".to_string()).await;
         assert_eq!(result, RedisValueRef::Int(0));
     }
 
     #[tokio::test]
     async fn test_lpop() {
         let db = setup();
-        let key = Bytes::from("key");
-        let value = vec![Bytes::from("a")];
+        let key = "key".to_string();
+        let value = vec!["a".to_string()];
         let result = rpush(&db, key.clone(), value).await;
         assert_eq!(result, RedisValueRef::Int(1));
 
@@ -426,19 +419,19 @@ mod tests {
         assert_eq!(result, RedisValueRef::NullBulkString);
 
         // Non-existent key
-        let result = lpop(&db, Bytes::from("nonexistent"), None).await;
+        let result = lpop(&db, "nonexistent".to_string(), None).await;
         assert_eq!(result, RedisValueRef::NullBulkString);
     }
 
     #[tokio::test]
     async fn test_lpop_multiple() {
         let db = setup();
-        let key = Bytes::from("key");
+        let key = "key".to_string();
         let value = vec![
-            Bytes::from("a"),
-            Bytes::from("b"),
-            Bytes::from("c"),
-            Bytes::from("d"),
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
         ];
         let result = rpush(&db, key.clone(), value).await;
         assert_eq!(result, RedisValueRef::Int(4));
@@ -477,7 +470,7 @@ mod tests {
     #[tokio::test]
     async fn test_blpop() {
         let db = setup();
-        let key = Bytes::from("mylist");
+        let key = "mylist".to_string();
 
         let db_clone = db.clone();
         let key_clone = key.clone();
@@ -485,7 +478,7 @@ mod tests {
         // Spawn a task that pushes after a short delay
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            lpush(&db_clone, key_clone, vec![Bytes::from("delayed_value")]).await;
+            lpush(&db_clone, key_clone, vec!["delayed_value".to_string()]).await;
         });
 
         // This should unblock when the push happens

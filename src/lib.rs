@@ -123,20 +123,16 @@ pub fn ping() -> RedisValueRef {
     RedisValueRef::SimpleString(Bytes::from("PONG"))
 }
 
-pub fn echo(arg: Bytes) -> RedisValueRef {
-    RedisValueRef::String(arg)
+pub fn echo(arg: String) -> RedisValueRef {
+    RedisValueRef::String(Bytes::from(arg))
 }
 
-pub async fn set(db: &Db, key: Bytes, value: Bytes) -> RedisValueRef {
-    db.dict.insert(
-        String::from_utf8_lossy(&key).to_string(),
-        RedisValue::String(value),
-    );
+pub async fn set(db: &Db, key: String, value: String) -> RedisValueRef {
+    db.dict.insert(key, RedisValue::String(Bytes::from(value)));
     RedisValueRef::SimpleString(Bytes::from("OK"))
 }
 
-pub async fn set_ex(db: &Db, key: Bytes, value: Bytes, ttl: u64) -> RedisValueRef {
-    let key_string = String::from_utf8_lossy(&key).to_string();
+pub async fn set_ex(db: &Db, key: String, value: String, ttl: u64) -> RedisValueRef {
     let expiry = (SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -144,23 +140,20 @@ pub async fn set_ex(db: &Db, key: Bytes, value: Bytes, ttl: u64) -> RedisValueRe
         .saturating_add(ttl);
 
     db.dict
-        .insert(key_string.clone(), RedisValue::String(value));
-    db.ttl.insert(key_string, expiry);
+        .insert(key.clone(), RedisValue::String(Bytes::from(value)));
+    db.ttl.insert(key, expiry);
     RedisValueRef::SimpleString(Bytes::from("OK"))
 }
 
-pub async fn get(db: &Db, key: Bytes) -> RedisValueRef {
-    let key_string = String::from_utf8_lossy(&key).to_string();
-
-    match db.get_if_valid(&key_string) {
+pub async fn get(db: &Db, key: String) -> RedisValueRef {
+    match db.get_if_valid(&key) {
         Some(value) => RedisValueRef::from(&*value),
         None => RedisValueRef::NullBulkString,
     }
 }
 
-pub async fn _type(db: &Db, key: Bytes) -> RedisValueRef {
-    let key_string = String::from_utf8_lossy(&key).to_string();
-    let result = match db.get_if_valid(&key_string) {
+pub async fn _type(db: &Db, key: String) -> RedisValueRef {
+    let result = match db.get_if_valid(&key) {
         Some(entry) => match *entry {
             RedisValue::String(_) => "string",
             RedisValue::List(_) => "list",
@@ -171,9 +164,8 @@ pub async fn _type(db: &Db, key: Bytes) -> RedisValueRef {
     RedisValueRef::SimpleString(Bytes::from(result))
 }
 
-pub async fn incr(db: &Db, key: Bytes) -> RedisValueRef {
-    let key_string = String::from_utf8_lossy(&key).to_string();
-    let result = match db.get_if_valid(&key_string) {
+pub async fn incr(db: &Db, key: String) -> RedisValueRef {
+    let result = match db.get_if_valid(&key) {
         Some(entry) => match &*entry {
             RedisValue::String(value) => {
                 let new_value = String::from_utf8_lossy(value).to_string();
@@ -193,14 +185,12 @@ pub async fn incr(db: &Db, key: Bytes) -> RedisValueRef {
         },
         None => 1,
     };
-    db.dict.insert(
-        key_string,
-        RedisValue::String(Bytes::from(result.to_string())),
-    );
+    db.dict
+        .insert(key, RedisValue::String(Bytes::from(result.to_string())));
     RedisValueRef::Int(result)
 }
 
-pub async fn info(db: &Db, _section: Bytes) -> RedisValueRef {
+pub async fn info(db: &Db, _section: String) -> RedisValueRef {
     let role = if db.replica_of.is_some() {
         "slave"
     } else {
@@ -228,8 +218,8 @@ mod tests {
     #[tokio::test]
     async fn test_set_get() {
         let db = setup();
-        let key = Bytes::from("key");
-        let value = Bytes::from("value");
+        let key = "key".to_string();
+        let value = "value".to_string();
 
         let result = set(&db, key.clone(), value.clone()).await;
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
@@ -241,8 +231,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_set_expired() {
         let db = setup();
-        let key = Bytes::from("key");
-        let value = Bytes::from("value");
+        let key = "key".to_string();
+        let value = "value".to_string();
         let result = set_ex(&db, key.clone(), value.clone(), 1).await;
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -253,8 +243,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_set_not_expired() {
         let db = setup();
-        let key = Bytes::from("key");
-        let value = Bytes::from("value");
+        let key = "key".to_string();
+        let value = "value".to_string();
         let result = set_ex(&db, key.clone(), value.clone(), 1000000).await;
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
 
@@ -265,8 +255,8 @@ mod tests {
     #[tokio::test]
     async fn test_type() {
         let db = setup();
-        let key = Bytes::from("test_key");
-        let value = Bytes::from("test_value");
+        let key = "test_key".to_string();
+        let value = "test_value".to_string();
 
         let result = set(&db, key.clone(), value.clone()).await;
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
@@ -274,14 +264,14 @@ mod tests {
         let result = _type(&db, key).await;
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("string")));
 
-        let result = _type(&db, Bytes::from("notexist")).await;
+        let result = _type(&db, "notexist".to_string()).await;
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("none")));
     }
 
     #[tokio::test]
     async fn test_incr() {
         let db = setup();
-        let key = Bytes::from("test_key");
+        let key = "test_key".to_string();
         let result = incr(&db, key.clone()).await;
         assert_eq!(result, RedisValueRef::Int(1));
 
@@ -292,8 +282,8 @@ mod tests {
     #[tokio::test]
     async fn test_incr_not_number() {
         let db = setup();
-        let key = Bytes::from("test_key");
-        set(&db, key.clone(), Bytes::from("stringlol")).await;
+        let key = "test_key".to_string();
+        set(&db, key.clone(), "stringlol".to_string()).await;
 
         let result = incr(&db, key.clone()).await;
         assert!(matches!(result, RedisValueRef::Error(_)));

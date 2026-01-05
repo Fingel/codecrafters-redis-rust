@@ -154,15 +154,19 @@ fn notify_stream_waiters(db: &Db, key: &str, stream_id: &StreamId, fields: &Stre
 
 pub async fn xadd(
     db: &Db,
-    key: Bytes,
+    key: String,
     id_tuple: StreamIdIn,
-    fields: Vec<(Bytes, Bytes)>,
+    fields: Vec<(String, String)>,
 ) -> RedisValueRef {
     let (ms, seq) = id_tuple;
     if ms == Some(0) && seq == Some(0) {
         return ref_error("ERR The ID specified in XADD must be greater than 0-0");
     }
-    let key_string = String::from_utf8_lossy(&key).to_string();
+    let key_string = key;
+    let fields: Vec<(Bytes, Bytes)> = fields
+        .into_iter()
+        .map(|(k, v)| (Bytes::from(k), Bytes::from(v)))
+        .collect();
     match db.get_mut_if_valid(&key_string) {
         Some(mut entry) => match &mut *entry {
             RedisValue::Stream(existing_stream) => {
@@ -196,8 +200,8 @@ pub async fn xadd(
     }
 }
 
-pub async fn xrange(db: &Db, key: Bytes, start: StreamIdIn, stop: StreamIdIn) -> RedisValueRef {
-    let key_string = String::from_utf8_lossy(&key).to_string();
+pub async fn xrange(db: &Db, key: String, start: StreamIdIn, stop: StreamIdIn) -> RedisValueRef {
+    let key_string = key;
     let (start_ms, start_seq) = start;
     let (stop_ms, stop_seq) = stop;
     match db.get_if_valid(&key_string) {
@@ -224,12 +228,12 @@ pub async fn xrange(db: &Db, key: Bytes, start: StreamIdIn, stop: StreamIdIn) ->
 
 async fn xread_results(
     db: &Db,
-    streams: &Vec<(Bytes, StreamIdIn)>,
+    streams: &Vec<(String, StreamIdIn)>,
     exclusive: bool,
 ) -> Result<Vec<RedisValueRef>, RedisValueRef> {
     let mut result = Vec::new();
     for (key, stream_id) in streams {
-        let key_string = String::from_utf8_lossy(key).to_string();
+        let key_string = key.clone();
         match db.get_if_valid(&key_string) {
             Some(entry) => match &*entry {
                 RedisValue::Stream(stream) => {
@@ -250,7 +254,7 @@ async fn xread_results(
                         .collect();
                     if !results.is_empty() {
                         result.push(RedisValueRef::Array(vec![
-                            RedisValueRef::String(key.clone()),
+                            RedisValueRef::String(Bytes::from(key.clone())),
                             RedisValueRef::Array(results),
                         ]));
                     }
@@ -263,7 +267,7 @@ async fn xread_results(
     Ok(result)
 }
 
-pub async fn xread(db: &Db, streams: Vec<(Bytes, StreamIdIn)>) -> RedisValueRef {
+pub async fn xread(db: &Db, streams: Vec<(String, StreamIdIn)>) -> RedisValueRef {
     match xread_results(db, &streams, false).await {
         Ok(result) => RedisValueRef::Array(result),
         Err(err) => err,
@@ -272,7 +276,7 @@ pub async fn xread(db: &Db, streams: Vec<(Bytes, StreamIdIn)>) -> RedisValueRef 
 
 pub async fn xread_block(
     db: &Db,
-    streams: Vec<(Bytes, StreamIdIn)>,
+    streams: Vec<(String, StreamIdIn)>,
     timeout: u64,
 ) -> RedisValueRef {
     match xread_results(db, &streams, true).await {
@@ -282,7 +286,7 @@ pub async fn xread_block(
             } else {
                 let mut receivers = Vec::new();
                 for (key, _) in streams {
-                    let key_string = String::from_utf8_lossy(&key).to_string();
+                    let key_string = key;
                     let (tx, rx) = tokio::sync::oneshot::channel();
                     {
                         let mut waiters = db.stream_waiters.lock().unwrap();
@@ -391,25 +395,26 @@ mod tests {
     #[tokio::test]
     async fn test_xadd() {
         let db = setup();
-        let key = Bytes::from("test_stream");
+        let key = "test_stream".to_string();
         let time = Some(1);
         let seq = Some(1);
         let fields = vec![
-            (Bytes::from("field1"), Bytes::from("value1")),
-            (Bytes::from("field2"), Bytes::from("value2")),
+            ("field1".to_string(), "value1".to_string()),
+            ("field2".to_string(), "value2".to_string()),
         ];
 
         let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
         assert_eq!(result, RedisValueRef::String("1-1".into()));
 
-        let redis_val = db
-            .get_if_valid(&String::from_utf8_lossy(&key))
-            .unwrap()
-            .clone();
+        let redis_val = db.get_if_valid(&key).unwrap().clone();
         let stream_id = StreamId { ms: 1, seq: 1 };
+        let expected_fields: Vec<(Bytes, Bytes)> = vec![
+            (Bytes::from("field1"), Bytes::from("value1")),
+            (Bytes::from("field2"), Bytes::from("value2")),
+        ];
         match redis_val {
             RedisValue::Stream(stream) => {
-                assert_eq!(stream.get(&stream_id), Some(&fields))
+                assert_eq!(stream.get(&stream_id), Some(&expected_fields))
             }
             _ => {
                 panic!("Expected RedisValue::Stream");
@@ -420,7 +425,7 @@ mod tests {
     #[tokio::test]
     async fn test_xadd_auto_seq() {
         let db = setup();
-        let key = Bytes::from("test_stream");
+        let key = "test_stream".to_string();
         let time = Some(1);
         let seq = Some(1);
         let fields = vec![];
@@ -435,7 +440,7 @@ mod tests {
     #[tokio::test]
     async fn test_xadd_same() {
         let db = setup();
-        let key = Bytes::from("test_stream");
+        let key = "test_stream".to_string();
         let time = Some(1);
         let seq = Some(1);
         let fields = vec![];
@@ -455,7 +460,7 @@ mod tests {
     #[tokio::test]
     async fn test_xadd_less() {
         let db = setup();
-        let key = Bytes::from("test_stream");
+        let key = "test_stream".to_string();
         let time = Some(2);
         let seq = Some(2);
         let fields = vec![];
@@ -485,27 +490,27 @@ mod tests {
     #[tokio::test]
     async fn test_xrange() {
         let db = setup();
-        let key = Bytes::from("test_stream");
+        let key = "test_stream".to_string();
         let entries = vec![
             (
                 (Some(1), Some(0)),
                 vec![
-                    (Bytes::from("1-0-field1"), Bytes::from("1-0value1")),
-                    (Bytes::from("1-0-field2"), Bytes::from("1-0value2")),
+                    ("1-0-field1".to_string(), "1-0value1".to_string()),
+                    ("1-0-field2".to_string(), "1-0value2".to_string()),
                 ],
             ),
             (
                 (Some(2), Some(0)),
                 vec![
-                    (Bytes::from("2-0-field1"), Bytes::from("2-0value1")),
-                    (Bytes::from("2-0-field2"), Bytes::from("2-0value2")),
+                    ("2-0-field1".to_string(), "2-0value1".to_string()),
+                    ("2-0-field2".to_string(), "2-0value2".to_string()),
                 ],
             ),
             (
                 (Some(2), Some(2)),
                 vec![
-                    (Bytes::from("2-2-field1"), Bytes::from("2-2value1")),
-                    (Bytes::from("2-2-field2"), Bytes::from("2-2value2")),
+                    ("2-2-field1".to_string(), "2-2value1".to_string()),
+                    ("2-2-field2".to_string(), "2-2value2".to_string()),
                 ],
             ),
         ];
@@ -610,30 +615,30 @@ mod tests {
     #[tokio::test]
     async fn test_xread() {
         let db = setup();
-        let key1 = Bytes::from("test_stream");
+        let key1 = "test_stream1".to_string();
         let entries = vec![
             (
                 Some(1),
                 Some(0),
                 vec![
-                    (Bytes::from("1-1-0-field1"), Bytes::from("1-1-0value1")),
-                    (Bytes::from("1-1-0-field2"), Bytes::from("1-1-0value2")),
+                    ("1-1-0-field1".to_string(), "1-1-0value1".to_string()),
+                    ("1-1-0-field2".to_string(), "1-1-0value2".to_string()),
                 ],
             ),
             (
                 Some(2),
                 Some(0),
                 vec![
-                    (Bytes::from("1-2-0-field1"), Bytes::from("1-2-0value1")),
-                    (Bytes::from("1-2-0-field2"), Bytes::from("1-2-0value2")),
+                    ("1-2-0-field1".to_string(), "1-2-0value1".to_string()),
+                    ("1-2-0-field2".to_string(), "1-2-0value2".to_string()),
                 ],
             ),
             (
                 Some(2),
                 Some(2),
                 vec![
-                    (Bytes::from("1-2-2-field1"), Bytes::from("1-2-2value1")),
-                    (Bytes::from("1-2-2-field2"), Bytes::from("1-2-2value2")),
+                    ("1-2-2-field1".to_string(), "1-2-2value1".to_string()),
+                    ("1-2-2-field2".to_string(), "1-2-2value2".to_string()),
                 ],
             ),
         ];
@@ -641,30 +646,30 @@ mod tests {
             xadd(&db, key1.clone(), (entry.0, entry.1), entry.2).await;
         }
 
-        let key2 = Bytes::from("test_stream2");
+        let key2 = "test_stream2".to_string();
         let entries2 = vec![
             (
                 Some(1),
                 Some(0),
                 vec![
-                    (Bytes::from("2-1-0-field1"), Bytes::from("2-1-0value1")),
-                    (Bytes::from("2-1-0-field2"), Bytes::from("2-1-0value2")),
+                    ("2-1-0-field1".to_string(), "2-1-0value1".to_string()),
+                    ("2-1-0-field2".to_string(), "2-1-0value2".to_string()),
                 ],
             ),
             (
                 Some(2),
                 Some(0),
                 vec![
-                    (Bytes::from("2-2-0-field1"), Bytes::from("2-2-0value1")),
-                    (Bytes::from("2-2-0-field2"), Bytes::from("2-2-0value2")),
+                    ("2-2-0-field1".to_string(), "2-2-0value1".to_string()),
+                    ("2-2-0-field2".to_string(), "2-2-0value2".to_string()),
                 ],
             ),
             (
                 Some(2),
                 Some(2),
                 vec![
-                    (Bytes::from("2-2-2-field1"), Bytes::from("2-2-2value1")),
-                    (Bytes::from("2-2-2-field2"), Bytes::from("2-2-2value2")),
+                    ("2-2-2-field1".to_string(), "2-2-2value1".to_string()),
+                    ("2-2-2-field2".to_string(), "2-2-2value2".to_string()),
                 ],
             ),
         ];
@@ -684,7 +689,7 @@ mod tests {
             result,
             RedisValueRef::Array(vec![
                 RedisValueRef::Array(vec![
-                    RedisValueRef::String(key1),
+                    RedisValueRef::String(Bytes::from(key1)),
                     RedisValueRef::Array(vec![
                         RedisValueRef::Array(vec![
                             RedisValueRef::String("1-0".into()),
@@ -716,7 +721,7 @@ mod tests {
                     ]) // end key 1
                 ]),
                 RedisValueRef::Array(vec![
-                    RedisValueRef::String(key2),
+                    RedisValueRef::String(Bytes::from(key2)),
                     RedisValueRef::Array(vec![
                         RedisValueRef::Array(vec![
                             RedisValueRef::String("1-0".into()),
@@ -754,12 +759,12 @@ mod tests {
     #[tokio::test]
     async fn test_xadd_blocking() {
         let db = setup();
-        let key = Bytes::from("test_stream");
+        let key = "test_stream".to_string();
         let time = Some(1);
         let seq = Some(1);
         let fields = vec![
-            (Bytes::from("field1"), Bytes::from("value1")),
-            (Bytes::from("field2"), Bytes::from("value2")),
+            ("field1".to_string(), "value1".to_string()),
+            ("field2".to_string(), "value2".to_string()),
         ];
         // less than what we query for
         xadd(&db, key.clone(), (time, seq), fields.clone()).await;
@@ -777,7 +782,7 @@ mod tests {
 
         assert!(elapsed < Duration::from_millis(2000));
         let expected = RedisValueRef::Array(vec![
-            RedisValueRef::String(key),
+            RedisValueRef::String(Bytes::from(key.clone())),
             RedisValueRef::Array(vec![RedisValueRef::Array(vec![
                 RedisValueRef::String("2-1".into()),
                 RedisValueRef::Array(vec![

@@ -5,7 +5,7 @@ use codecrafters_redis::{
     _type, Db, RedisDb, echo, get, incr, info, lists, ping, replication, set, set_ex, streams,
 };
 use codecrafters_redis::{
-    interpreter::{RedisCommand, RedisInterpreter},
+    interpreter::RedisCommand,
     parser::{RedisValueRef, RespParser},
 };
 use futures::{SinkExt, StreamExt};
@@ -15,12 +15,11 @@ use tokio_util::codec::Decoder;
 async fn process(stream: TcpStream, db: Db) {
     tokio::spawn(async move {
         let mut transport = RespParser.framed(stream);
-        let interpreter = RedisInterpreter::new();
         let mut in_transaction = false;
         let mut queued_commands: Vec<RedisCommand> = Vec::new();
         while let Some(redis_value) = transport.next().await {
             match redis_value {
-                Ok(value) => match interpreter.interpret(value) {
+                Ok(value) => match value.try_into() {
                     Ok(command) => match command {
                         RedisCommand::Multi => {
                             if in_transaction {
@@ -151,7 +150,10 @@ async fn main() {
 
     if let Some((master_addr, master_port)) = db.replica_of.clone() {
         tokio::spawn(async move {
-            replication::handshake(master_addr, master_port).await;
+            if let Err(e) = replication::handshake(master_addr, master_port, port).await {
+                eprintln!("Replication handshake failed: {}", e);
+                std::process::exit(1);
+            }
         });
     }
 

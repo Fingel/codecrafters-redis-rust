@@ -124,7 +124,7 @@ pub fn ping() -> RedisValueRef {
 }
 
 pub fn echo(arg: String) -> RedisValueRef {
-    RedisValueRef::String(Bytes::from(arg))
+    arg.into()
 }
 
 pub async fn set(db: &Db, key: String, value: String) -> RedisValueRef {
@@ -203,7 +203,7 @@ pub async fn info(db: &Db, _section: String) -> RedisValueRef {
         master_repl_offset:{}\n",
         role, db.replication_id, db.replication_offset
     );
-    RedisValueRef::String(Bytes::from(info))
+    info.into()
 }
 
 #[cfg(test)]
@@ -225,7 +225,7 @@ mod tests {
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
 
         let result = get(&db, key).await;
-        assert_eq!(result, RedisValueRef::String(Bytes::from("value")));
+        assert_eq!(result, "value".into());
     }
 
     #[tokio::test]
@@ -249,7 +249,7 @@ mod tests {
         assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
 
         let result = get(&db, key).await;
-        assert_eq!(result, RedisValueRef::String(Bytes::from("value")));
+        assert_eq!(result, "value".into());
     }
 
     #[tokio::test]
@@ -294,7 +294,7 @@ mod tests {
         // Test From<&RedisValue> for RedisValueRef
         let stored_string = RedisValue::String(Bytes::from("hello"));
         let protocol: RedisValueRef = (&stored_string).into();
-        assert_eq!(protocol, RedisValueRef::String(Bytes::from("hello")));
+        assert_eq!(protocol, "hello".into());
 
         // Test with list
         let stored_list =
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn test_expect_string_helper() {
         // Test successful extraction
-        let value = RedisValueRef::String(Bytes::from("hello"));
+        let value: RedisValueRef = "hello".into();
         let result = value.expect_string();
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Bytes::from("hello"));

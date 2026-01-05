@@ -144,7 +144,7 @@ fn notify_stream_waiters(db: &Db, key: &str, stream_id: &StreamId, fields: &Stre
         for tx in waiter_queue.drain(..) {
             if !tx.is_closed() {
                 let _ = tx.send(RedisValueRef::Array(vec![
-                    RedisValueRef::String(Bytes::from(key.to_string())),
+                    key.to_string().into(),
                     RedisValueRef::Array(vec![(stream_id, fields).into()]),
                 ]));
             }
@@ -254,7 +254,7 @@ async fn xread_results(
                         .collect();
                     if !results.is_empty() {
                         result.push(RedisValueRef::Array(vec![
-                            RedisValueRef::String(Bytes::from(key.clone())),
+                            key.clone().into(),
                             RedisValueRef::Array(results),
                         ]));
                     }
@@ -404,7 +404,7 @@ mod tests {
         ];
 
         let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
-        assert_eq!(result, RedisValueRef::String("1-1".into()));
+        assert_eq!(result, "1-1".into());
 
         let redis_val = db.get_if_valid(&key).unwrap().clone();
         let stream_id = StreamId { ms: 1, seq: 1 };
@@ -431,10 +431,10 @@ mod tests {
         let fields = vec![];
 
         let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
-        assert_eq!(result, RedisValueRef::String("1-1".into()));
+        assert_eq!(result, "1-1".into());
 
         let result = xadd(&db, key.clone(), (Some(1), None), fields.clone()).await;
-        assert_eq!(result, RedisValueRef::String("1-2".into()));
+        assert_eq!(result, "1-2".into());
     }
 
     #[tokio::test]
@@ -446,7 +446,7 @@ mod tests {
         let fields = vec![];
 
         let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
-        assert_eq!(result, RedisValueRef::String("1-1".into()));
+        assert_eq!(result, "1-1".into());
 
         let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
         assert_eq!(
@@ -466,7 +466,7 @@ mod tests {
         let fields = vec![];
 
         let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
-        assert_eq!(result, RedisValueRef::String("2-2".into()));
+        assert_eq!(result, "2-2".into());
 
         // less ms
         let result = xadd(&db, key.clone(), (Some(1), Some(3)), fields.clone()).await;
@@ -523,30 +523,30 @@ mod tests {
             result,
             RedisValueRef::Array(vec![
                 RedisValueRef::Array(vec![
-                    RedisValueRef::String("1-0".into()),
+                    "1-0".into(),
                     RedisValueRef::Array(vec![
-                        RedisValueRef::String("1-0-field1".into()),
-                        RedisValueRef::String("1-0value1".into()),
-                        RedisValueRef::String("1-0-field2".into()),
-                        RedisValueRef::String("1-0value2".into()),
+                        "1-0-field1".into(),
+                        "1-0value1".into(),
+                        "1-0-field2".into(),
+                        "1-0value2".into(),
                     ]),
                 ]),
                 RedisValueRef::Array(vec![
-                    RedisValueRef::String("2-0".into()),
+                    "2-0".into(),
                     RedisValueRef::Array(vec![
-                        RedisValueRef::String("2-0-field1".into()),
-                        RedisValueRef::String("2-0value1".into()),
-                        RedisValueRef::String("2-0-field2".into()),
-                        RedisValueRef::String("2-0value2".into()),
+                        "2-0-field1".into(),
+                        "2-0value1".into(),
+                        "2-0-field2".into(),
+                        "2-0value2".into(),
                     ]),
                 ]),
                 RedisValueRef::Array(vec![
-                    RedisValueRef::String("2-2".into()),
+                    "2-2".into(),
                     RedisValueRef::Array(vec![
-                        RedisValueRef::String("2-2-field1".into()),
-                        RedisValueRef::String("2-2value1".into()),
-                        RedisValueRef::String("2-2-field2".into()),
-                        RedisValueRef::String("2-2value2".into()),
+                        "2-2-field1".into(),
+                        "2-2value1".into(),
+                        "2-2-field2".into(),
+                        "2-2value2".into(),
                     ]),
                 ]),
             ])
@@ -557,21 +557,21 @@ mod tests {
             result,
             RedisValueRef::Array(vec![
                 RedisValueRef::Array(vec![
-                    RedisValueRef::String("1-0".into()),
+                    "1-0".into(),
                     RedisValueRef::Array(vec![
-                        RedisValueRef::String("1-0-field1".into()),
-                        RedisValueRef::String("1-0value1".into()),
-                        RedisValueRef::String("1-0-field2".into()),
-                        RedisValueRef::String("1-0value2".into()),
+                        "1-0-field1".into(),
+                        "1-0value1".into(),
+                        "1-0-field2".into(),
+                        "1-0value2".into(),
                     ]),
                 ]),
                 RedisValueRef::Array(vec![
-                    RedisValueRef::String("2-0".into()),
+                    "2-0".into(),
                     RedisValueRef::Array(vec![
-                        RedisValueRef::String("2-0-field1".into()),
-                        RedisValueRef::String("2-0value1".into()),
-                        RedisValueRef::String("2-0-field2".into()),
-                        RedisValueRef::String("2-0value2".into()),
+                        "2-0-field1".into(),
+                        "2-0value1".into(),
+                        "2-0-field2".into(),
+                        "2-0value2".into(),
                     ]),
                 ]),
             ])
@@ -582,30 +582,30 @@ mod tests {
             result,
             RedisValueRef::Array(vec![
                 RedisValueRef::Array(vec![
-                    RedisValueRef::String("1-0".into()),
+                    "1-0".into(),
                     RedisValueRef::Array(vec![
-                        RedisValueRef::String("1-0-field1".into()),
-                        RedisValueRef::String("1-0value1".into()),
-                        RedisValueRef::String("1-0-field2".into()),
-                        RedisValueRef::String("1-0value2".into()),
+                        "1-0-field1".into(),
+                        "1-0value1".into(),
+                        "1-0-field2".into(),
+                        "1-0value2".into(),
                     ]),
                 ]),
                 RedisValueRef::Array(vec![
-                    RedisValueRef::String("2-0".into()),
+                    "2-0".into(),
                     RedisValueRef::Array(vec![
-                        RedisValueRef::String("2-0-field1".into()),
-                        RedisValueRef::String("2-0value1".into()),
-                        RedisValueRef::String("2-0-field2".into()),
-                        RedisValueRef::String("2-0value2".into()),
+                        "2-0-field1".into(),
+                        "2-0value1".into(),
+                        "2-0-field2".into(),
+                        "2-0value2".into(),
                     ]),
                 ]),
                 RedisValueRef::Array(vec![
-                    RedisValueRef::String("2-2".into()),
+                    "2-2".into(),
                     RedisValueRef::Array(vec![
-                        RedisValueRef::String("2-2-field1".into()),
-                        RedisValueRef::String("2-2value1".into()),
-                        RedisValueRef::String("2-2-field2".into()),
-                        RedisValueRef::String("2-2value2".into()),
+                        "2-2-field1".into(),
+                        "2-2value1".into(),
+                        "2-2-field2".into(),
+                        "2-2value2".into(),
                     ]),
                 ]),
             ])
@@ -689,65 +689,65 @@ mod tests {
             result,
             RedisValueRef::Array(vec![
                 RedisValueRef::Array(vec![
-                    RedisValueRef::String(Bytes::from(key1)),
+                    key1.into(),
                     RedisValueRef::Array(vec![
                         RedisValueRef::Array(vec![
-                            RedisValueRef::String("1-0".into()),
+                            "1-0".into(),
                             RedisValueRef::Array(vec![
-                                RedisValueRef::String("1-1-0-field1".into()),
-                                RedisValueRef::String("1-1-0value1".into()),
-                                RedisValueRef::String("1-1-0-field2".into()),
-                                RedisValueRef::String("1-1-0value2".into()),
+                                "1-1-0-field1".into(),
+                                "1-1-0value1".into(),
+                                "1-1-0-field2".into(),
+                                "1-1-0value2".into(),
                             ]),
                         ]),
                         RedisValueRef::Array(vec![
-                            RedisValueRef::String("2-0".into()),
+                            "2-0".into(),
                             RedisValueRef::Array(vec![
-                                RedisValueRef::String("1-2-0-field1".into()),
-                                RedisValueRef::String("1-2-0value1".into()),
-                                RedisValueRef::String("1-2-0-field2".into()),
-                                RedisValueRef::String("1-2-0value2".into()),
+                                "1-2-0-field1".into(),
+                                "1-2-0value1".into(),
+                                "1-2-0-field2".into(),
+                                "1-2-0value2".into(),
                             ]),
                         ]),
                         RedisValueRef::Array(vec![
-                            RedisValueRef::String("2-2".into()),
+                            "2-2".into(),
                             RedisValueRef::Array(vec![
-                                RedisValueRef::String("1-2-2-field1".into()),
-                                RedisValueRef::String("1-2-2value1".into()),
-                                RedisValueRef::String("1-2-2-field2".into()),
-                                RedisValueRef::String("1-2-2value2".into()),
+                                "1-2-2-field1".into(),
+                                "1-2-2value1".into(),
+                                "1-2-2-field2".into(),
+                                "1-2-2value2".into(),
                             ]),
                         ]),
                     ]) // end key 1
                 ]),
                 RedisValueRef::Array(vec![
-                    RedisValueRef::String(Bytes::from(key2)),
+                    key2.into(),
                     RedisValueRef::Array(vec![
                         RedisValueRef::Array(vec![
-                            RedisValueRef::String("1-0".into()),
+                            "1-0".into(),
                             RedisValueRef::Array(vec![
-                                RedisValueRef::String("2-1-0-field1".into()),
-                                RedisValueRef::String("2-1-0value1".into()),
-                                RedisValueRef::String("2-1-0-field2".into()),
-                                RedisValueRef::String("2-1-0value2".into()),
+                                "2-1-0-field1".into(),
+                                "2-1-0value1".into(),
+                                "2-1-0-field2".into(),
+                                "2-1-0value2".into(),
                             ]),
                         ]),
                         RedisValueRef::Array(vec![
-                            RedisValueRef::String("2-0".into()),
+                            "2-0".into(),
                             RedisValueRef::Array(vec![
-                                RedisValueRef::String("2-2-0-field1".into()),
-                                RedisValueRef::String("2-2-0value1".into()),
-                                RedisValueRef::String("2-2-0-field2".into()),
-                                RedisValueRef::String("2-2-0value2".into()),
+                                "2-2-0-field1".into(),
+                                "2-2-0value1".into(),
+                                "2-2-0-field2".into(),
+                                "2-2-0value2".into(),
                             ]),
                         ]),
                         RedisValueRef::Array(vec![
-                            RedisValueRef::String("2-2".into()),
+                            "2-2".into(),
                             RedisValueRef::Array(vec![
-                                RedisValueRef::String("2-2-2-field1".into()),
-                                RedisValueRef::String("2-2-2value1".into()),
-                                RedisValueRef::String("2-2-2-field2".into()),
-                                RedisValueRef::String("2-2-2value2".into()),
+                                "2-2-2-field1".into(),
+                                "2-2-2value1".into(),
+                                "2-2-2-field2".into(),
+                                "2-2-2value2".into(),
                             ]),
                         ]),
                     ]) // end key 2
@@ -782,14 +782,14 @@ mod tests {
 
         assert!(elapsed < Duration::from_millis(2000));
         let expected = RedisValueRef::Array(vec![
-            RedisValueRef::String(Bytes::from(key.clone())),
+            key.clone().into(),
             RedisValueRef::Array(vec![RedisValueRef::Array(vec![
-                RedisValueRef::String("2-1".into()),
+                "2-1".into(),
                 RedisValueRef::Array(vec![
-                    RedisValueRef::String("field1".into()),
-                    RedisValueRef::String("value1".into()),
-                    RedisValueRef::String("field2".into()),
-                    RedisValueRef::String("value2".into()),
+                    "field1".into(),
+                    "value1".into(),
+                    "field2".into(),
+                    "value2".into(),
                 ]),
             ])]),
         ]);

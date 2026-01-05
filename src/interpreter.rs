@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use thiserror::Error;
 
 use crate::{parser::RedisValueRef, streams::StreamIdIn};
@@ -121,19 +120,13 @@ impl TryFrom<RedisCommand> for RedisValueRef {
 
     fn try_from(cmd: RedisCommand) -> Result<Self, CmdError> {
         let value = match cmd {
-            RedisCommand::Ping => {
-                RedisValueRef::Array(vec![RedisValueRef::String(Bytes::from("PING"))])
+            RedisCommand::Ping => RedisValueRef::Array(vec!["PING".into()]),
+            RedisCommand::ReplConf(key, value) => {
+                RedisValueRef::Array(vec!["REPLCONF".into(), key.into(), value.into()])
             }
-            RedisCommand::ReplConf(key, value) => RedisValueRef::Array(vec![
-                RedisValueRef::String(Bytes::from("REPLCONF")),
-                RedisValueRef::String(Bytes::from(key)),
-                RedisValueRef::String(Bytes::from(value)),
-            ]),
-            RedisCommand::Psync(id, offset) => RedisValueRef::Array(vec![
-                RedisValueRef::String(Bytes::from("PSYNC")),
-                RedisValueRef::String(Bytes::from(id)),
-                RedisValueRef::String(Bytes::from(offset.to_string())),
-            ]),
+            RedisCommand::Psync(id, offset) => {
+                RedisValueRef::Array(vec!["PSYNC".into(), id.into(), offset.to_string().into()])
+            }
             _ => {
                 return Err(CmdError::InvalidCommandType);
             }
@@ -402,28 +395,22 @@ fn psync(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
 
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
-
     use super::*;
 
     #[test]
     fn test_ping() {
-        let command: RedisCommand =
-            RedisValueRef::Array(vec![RedisValueRef::String(Bytes::from("PING"))])
-                .try_into()
-                .unwrap();
+        let command: RedisCommand = RedisValueRef::Array(vec!["PING".into()])
+            .try_into()
+            .unwrap();
 
         assert_eq!(command, RedisCommand::Ping);
     }
 
     #[test]
     fn test_echo() {
-        let command: RedisCommand = RedisValueRef::Array(vec![
-            RedisValueRef::String(Bytes::from("ECHO")),
-            RedisValueRef::String(Bytes::from("Hello")),
-        ])
-        .try_into()
-        .unwrap();
+        let command: RedisCommand = RedisValueRef::Array(vec!["ECHO".into(), "Hello".into()])
+            .try_into()
+            .unwrap();
 
         assert_eq!(command, RedisCommand::Echo("Hello".to_string()));
     }
@@ -431,14 +418,14 @@ mod tests {
     #[test]
     fn test_xadd() {
         let command: RedisCommand = RedisValueRef::Array(vec![
-            RedisValueRef::String(Bytes::from("XADD")),
-            RedisValueRef::String(Bytes::from("key")),
-            RedisValueRef::String(Bytes::from("0-1")),
-            RedisValueRef::String(Bytes::from("field1")),
-            RedisValueRef::String(Bytes::from("value1")),
-            RedisValueRef::String(Bytes::from("field2")),
-            RedisValueRef::String(Bytes::from("value2")),
-            RedisValueRef::String(Bytes::from("oops")), // Make sure extra args are ignored
+            "XADD".into(),
+            "key".into(),
+            "0-1".into(),
+            "field1".into(),
+            "value1".into(),
+            "field2".into(),
+            "value2".into(),
+            "oops".into(), // Make sure extra args are ignored
         ])
         .try_into()
         .unwrap();
@@ -459,10 +446,10 @@ mod tests {
     #[test]
     fn test_xadd_num_args() {
         let error: Result<RedisCommand, CmdError> = RedisValueRef::Array(vec![
-            RedisValueRef::String(Bytes::from("XADD")),
-            RedisValueRef::String(Bytes::from("key")),
-            RedisValueRef::String(Bytes::from("0-1")),
-            RedisValueRef::String(Bytes::from("field1")), // no value
+            "XADD".into(),
+            "key".into(),
+            "0-1".into(),
+            "field1".into(), // no value
         ])
         .try_into();
 
@@ -472,11 +459,11 @@ mod tests {
     #[test]
     fn test_xadd_bad_id() {
         let err: Result<RedisCommand, CmdError> = RedisValueRef::Array(vec![
-            RedisValueRef::String(Bytes::from("XADD")),
-            RedisValueRef::String(Bytes::from("key")),
-            RedisValueRef::String(Bytes::from("1-asdf")),
-            RedisValueRef::String(Bytes::from("field1")),
-            RedisValueRef::String(Bytes::from("value1")),
+            "XADD".into(),
+            "key".into(),
+            "1-asdf".into(),
+            "field1".into(),
+            "value1".into(),
         ])
         .try_into();
 
@@ -486,10 +473,10 @@ mod tests {
     #[test]
     fn test_xrange() {
         let command: RedisCommand = RedisValueRef::Array(vec![
-            RedisValueRef::String(Bytes::from("XRANGE")),
-            RedisValueRef::String(Bytes::from("key")),
-            RedisValueRef::String(Bytes::from("1-0")),
-            RedisValueRef::String(Bytes::from("2-0")),
+            "XRANGE".into(),
+            "key".into(),
+            "1-0".into(),
+            "2-0".into(),
         ])
         .try_into()
         .unwrap();
@@ -504,12 +491,12 @@ mod tests {
     fn test_xread() {
         // XREAD streams stream1 stream2 1-0 2-0
         let command: RedisCommand = RedisValueRef::Array(vec![
-            RedisValueRef::String(Bytes::from("XREAD")),
-            RedisValueRef::String(Bytes::from("streams")),
-            RedisValueRef::String(Bytes::from("stream1")),
-            RedisValueRef::String(Bytes::from("stream2")),
-            RedisValueRef::String(Bytes::from("1-0")),
-            RedisValueRef::String(Bytes::from("2-0")),
+            "XREAD".into(),
+            "streams".into(),
+            "stream1".into(),
+            "stream2".into(),
+            "1-0".into(),
+            "2-0".into(),
         ])
         .try_into()
         .unwrap();
@@ -530,14 +517,14 @@ mod tests {
     fn test_xread_block() {
         // XREAD streams stream1 stream2 1-0 2-0
         let command: RedisCommand = RedisValueRef::Array(vec![
-            RedisValueRef::String(Bytes::from("XREAD")),
-            RedisValueRef::String(Bytes::from("BLOCK")),
-            RedisValueRef::String(Bytes::from("1000")),
-            RedisValueRef::String(Bytes::from("streams")),
-            RedisValueRef::String(Bytes::from("stream1")),
-            RedisValueRef::String(Bytes::from("stream2")),
-            RedisValueRef::String(Bytes::from("1-0")),
-            RedisValueRef::String(Bytes::from("2-0")),
+            "XREAD".into(),
+            "BLOCK".into(),
+            "1000".into(),
+            "streams".into(),
+            "stream1".into(),
+            "stream2".into(),
+            "1-0".into(),
+            "2-0".into(),
         ])
         .try_into()
         .unwrap();

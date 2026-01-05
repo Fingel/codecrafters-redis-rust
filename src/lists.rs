@@ -194,16 +194,13 @@ pub async fn blpop(db: &Db, key: String, timeout: Option<f64>) -> RedisValueRef 
                 rx.await.ok()
             };
             match res {
-                Some(val) => RedisValueRef::Array(vec![
-                    RedisValueRef::String(Bytes::from(key)),
-                    RedisValueRef::String(val),
-                ]),
+                Some(val) => RedisValueRef::Array(vec![key.into(), RedisValueRef::String(val)]),
                 None => RedisValueRef::NullArray,
             }
         }
         _ => {
             let val = lpop(db, key.clone(), Some(1)).await;
-            RedisValueRef::Array(vec![RedisValueRef::String(Bytes::from(key)), val])
+            RedisValueRef::Array(vec![key.into(), val])
         }
     }
 }
@@ -237,10 +234,7 @@ mod tests {
         let result = get(&db, key).await;
         assert_eq!(
             result,
-            RedisValueRef::Array(vec![
-                RedisValueRef::String(Bytes::from("value1")),
-                RedisValueRef::String(Bytes::from("value2")),
-            ])
+            RedisValueRef::Array(vec!["value1".into(), "value2".into(),])
         );
     }
 
@@ -276,10 +270,7 @@ mod tests {
         let result = get(&db, key).await;
         assert_eq!(
             result,
-            RedisValueRef::Array(vec![
-                RedisValueRef::String(Bytes::from("value1")),
-                RedisValueRef::String(Bytes::from("value2")),
-            ])
+            RedisValueRef::Array(vec!["value1".into(), "value2".into(),])
         );
     }
 
@@ -299,11 +290,7 @@ mod tests {
         let result = lrange(&db, key, 0, -1).await;
         assert_eq!(
             result,
-            RedisValueRef::Array(vec![
-                RedisValueRef::String(Bytes::from("a")),
-                RedisValueRef::String(Bytes::from("b")),
-                RedisValueRef::String(Bytes::from("c")),
-            ])
+            RedisValueRef::Array(vec!["a".into(), "b".into(), "c".into(),])
         );
     }
 
@@ -323,10 +310,7 @@ mod tests {
         let result = lrange(&db, key, 0, 1).await;
         assert_eq!(
             result,
-            RedisValueRef::Array(vec![
-                RedisValueRef::String(Bytes::from("value1")),
-                RedisValueRef::String(Bytes::from("value2")),
-            ])
+            RedisValueRef::Array(vec!["value1".into(), "value2".into(),])
         );
     }
 
@@ -346,11 +330,7 @@ mod tests {
         let result = lrange(&db, key, 0, 10).await;
         assert_eq!(
             result,
-            RedisValueRef::Array(vec![
-                RedisValueRef::String(Bytes::from("value1")),
-                RedisValueRef::String(Bytes::from("value2")),
-                RedisValueRef::String(Bytes::from("value3")),
-            ])
+            RedisValueRef::Array(vec!["value1".into(), "value2".into(), "value3".into(),])
         );
     }
 
@@ -372,11 +352,7 @@ mod tests {
         let result = lrange(&db, key, 2, -1).await;
         assert_eq!(
             result,
-            RedisValueRef::Array(vec![
-                RedisValueRef::String(Bytes::from("c")),
-                RedisValueRef::String(Bytes::from("d")),
-                RedisValueRef::String(Bytes::from("e")),
-            ])
+            RedisValueRef::Array(vec!["c".into(), "d".into(), "e".into(),])
         );
     }
 
@@ -412,7 +388,7 @@ mod tests {
 
         // Matches example test on #EF1
         let result = lpop(&db, key.clone(), None).await;
-        assert_eq!(result, RedisValueRef::String(Bytes::from("a")));
+        assert_eq!(result, "a".into());
 
         // Should now be empty
         let result = lpop(&db, key, None).await;
@@ -438,33 +414,15 @@ mod tests {
 
         // Matches example test on #JP1
         let result = lpop(&db, key.clone(), Some(2)).await;
-        assert_eq!(
-            result,
-            RedisValueRef::Array(vec![
-                RedisValueRef::String(Bytes::from("a")),
-                RedisValueRef::String(Bytes::from("b"))
-            ])
-        );
+        assert_eq!(result, RedisValueRef::Array(vec!["a".into(), "b".into()]));
 
         // List should now only contain c and d
         let result = lrange(&db, key.clone(), 0, -1).await;
-        assert_eq!(
-            result,
-            RedisValueRef::Array(vec![
-                RedisValueRef::String(Bytes::from("c")),
-                RedisValueRef::String(Bytes::from("d"))
-            ])
-        );
+        assert_eq!(result, RedisValueRef::Array(vec!["c".into(), "d".into()]));
 
         // Should remove all elements
         let result = lpop(&db, key.clone(), Some(100)).await;
-        assert_eq!(
-            result,
-            RedisValueRef::Array(vec![
-                RedisValueRef::String(Bytes::from("c")),
-                RedisValueRef::String(Bytes::from("d"))
-            ])
-        );
+        assert_eq!(result, RedisValueRef::Array(vec!["c".into(), "d".into()]));
     }
 
     #[tokio::test]
@@ -491,10 +449,7 @@ mod tests {
         match result {
             RedisValueRef::Array(items) => {
                 assert_eq!(items.len(), 2);
-                assert_eq!(
-                    items[1],
-                    RedisValueRef::String(Bytes::from("delayed_value"))
-                );
+                assert_eq!(items[1], "delayed_value".into());
             }
             _ => panic!("Expected array result"),
         }

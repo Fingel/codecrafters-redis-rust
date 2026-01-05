@@ -1,6 +1,9 @@
 use thiserror::Error;
 
-use crate::{parser::RedisValueRef, streams::StreamIdIn};
+use crate::{
+    parser::{RArray, RString, RedisValueRef},
+    streams::StreamIdIn,
+};
 
 #[derive(Debug, PartialEq)]
 pub enum RedisCommand {
@@ -120,13 +123,15 @@ impl TryFrom<RedisCommand> for RedisValueRef {
 
     fn try_from(cmd: RedisCommand) -> Result<Self, CmdError> {
         let value = match cmd {
-            RedisCommand::Ping => vec!["PING".into()].into(),
+            RedisCommand::Ping => RArray(vec![RString("PING")]),
             RedisCommand::ReplConf(key, value) => {
-                vec!["REPLCONF".into(), key.into(), value.into()].into()
+                RArray(vec![RString("REPLCONF"), RString(key), RString(value)])
             }
-            RedisCommand::Psync(id, offset) => {
-                vec!["PSYNC".into(), id.into(), offset.to_string().into()].into()
-            }
+            RedisCommand::Psync(id, offset) => RArray(vec![
+                RString("PSYNC"),
+                RString(id),
+                RString(offset.to_string()),
+            ]),
             _ => {
                 return Err(CmdError::InvalidCommandType);
             }
@@ -265,7 +270,7 @@ fn parse_stream_id(id: &str) -> Result<StreamIdIn, CmdError> {
         return Ok((Some(u64::MAX), Some(u64::MAX)));
     }
     let parts: Vec<&str> = id.split('-').collect();
-    let err = CmdError::InvalidArgument("id".into());
+    let err = CmdError::InvalidArgument("id".to_string());
     if parts.len() != 2 {
         return Err(err);
     }
@@ -335,7 +340,7 @@ fn xread(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
                     .to_uppercase()
                     == "STREAMS"
             })
-            .ok_or(CmdError::InvalidArgument("streams".into()))?;
+            .ok_or(CmdError::InvalidArgument("streams".to_string()))?;
         let streams_section = &args[streams_start + 1..];
         let mid = streams_section.len() / 2;
         let stream_keys = streams_section[..mid]
@@ -399,7 +404,7 @@ mod tests {
 
     #[test]
     fn test_ping() {
-        let value: RedisValueRef = vec!["PING".into()].into();
+        let value = RArray(vec![RString("PING")]);
         let command: RedisCommand = value.try_into().unwrap();
 
         assert_eq!(command, RedisCommand::Ping);
@@ -407,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_echo() {
-        let value: RedisValueRef = vec!["ECHO".into(), "Hello".into()].into();
+        let value = RArray(vec![RString("ECHO"), RString("Hello")]);
         let command: RedisCommand = value.try_into().unwrap();
 
         assert_eq!(command, RedisCommand::Echo("Hello".to_string()));
@@ -415,17 +420,16 @@ mod tests {
 
     #[test]
     fn test_xadd() {
-        let value: RedisValueRef = vec![
-            "XADD".into(),
-            "key".into(),
-            "0-1".into(),
-            "field1".into(),
-            "value1".into(),
-            "field2".into(),
-            "value2".into(),
-            "oops".into(), // Make sure extra args are ignored
-        ]
-        .into();
+        let value = RArray(vec![
+            RString("XADD"),
+            RString("key"),
+            RString("0-1"),
+            RString("field1"),
+            RString("value1"),
+            RString("field2"),
+            RString("value2"),
+            RString("oops"), // Make sure extra args are ignored
+        ]);
         let command: RedisCommand = value.try_into().unwrap();
 
         assert_eq!(
@@ -443,13 +447,12 @@ mod tests {
 
     #[test]
     fn test_xadd_num_args() {
-        let value: RedisValueRef = vec![
-            "XADD".into(),
-            "key".into(),
-            "0-1".into(),
-            "field1".into(), // no value
-        ]
-        .into();
+        let value = RArray(vec![
+            RString("XADD"),
+            RString("key"),
+            RString("0-1"),
+            RString("field1"), // no value
+        ]);
         let error: Result<RedisCommand, CmdError> = value.try_into();
 
         assert_eq!(error.unwrap_err(), CmdError::InvalidArgumentNum);
@@ -457,23 +460,29 @@ mod tests {
 
     #[test]
     fn test_xadd_bad_id() {
-        let value: RedisValueRef = vec![
-            "XADD".into(),
-            "key".into(),
-            "1-asdf".into(),
-            "field1".into(),
-            "value1".into(),
-        ]
-        .into();
+        let value = RArray(vec![
+            RString("XADD"),
+            RString("key"),
+            RString("1-asdf"),
+            RString("field1"),
+            RString("value1"),
+        ]);
         let err: Result<RedisCommand, CmdError> = value.try_into();
 
-        assert_eq!(err.unwrap_err(), CmdError::InvalidArgument("id".into()));
+        assert_eq!(
+            err.unwrap_err(),
+            CmdError::InvalidArgument("id".to_string())
+        );
     }
 
     #[test]
     fn test_xrange() {
-        let value: RedisValueRef =
-            vec!["XRANGE".into(), "key".into(), "1-0".into(), "2-0".into()].into();
+        let value = RArray(vec![
+            RString("XRANGE"),
+            RString("key"),
+            RString("1-0"),
+            RString("2-0"),
+        ]);
         let command: RedisCommand = value.try_into().unwrap();
 
         assert_eq!(
@@ -485,15 +494,14 @@ mod tests {
     #[test]
     fn test_xread() {
         // XREAD streams stream1 stream2 1-0 2-0
-        let value: RedisValueRef = vec![
-            "XREAD".into(),
-            "streams".into(),
-            "stream1".into(),
-            "stream2".into(),
-            "1-0".into(),
-            "2-0".into(),
-        ]
-        .into();
+        let value = RArray(vec![
+            RString("XREAD"),
+            RString("streams"),
+            RString("stream1"),
+            RString("stream2"),
+            RString("1-0"),
+            RString("2-0"),
+        ]);
         let command: RedisCommand = value.try_into().unwrap();
 
         assert_eq!(
@@ -511,17 +519,16 @@ mod tests {
     #[test]
     fn test_xread_block() {
         // XREAD streams stream1 stream2 1-0 2-0
-        let value: RedisValueRef = vec![
-            "XREAD".into(),
-            "BLOCK".into(),
-            "1000".into(),
-            "streams".into(),
-            "stream1".into(),
-            "stream2".into(),
-            "1-0".into(),
-            "2-0".into(),
-        ]
-        .into();
+        let value = RArray(vec![
+            RString("XREAD"),
+            RString("BLOCK"),
+            RString("1000"),
+            RString("streams"),
+            RString("stream1"),
+            RString("stream2"),
+            RString("1-0"),
+            RString("2-0"),
+        ]);
         let command: RedisCommand = value.try_into().unwrap();
 
         assert_eq!(

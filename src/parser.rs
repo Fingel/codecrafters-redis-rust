@@ -39,9 +39,7 @@ impl RedisValueRef {
     pub fn expect_string(self) -> Result<Bytes, RedisValueRef> {
         match self {
             RedisValueRef::String(s) => Ok(s),
-            _ => Err(RedisValueRef::Error(Bytes::from(
-                "ERR value must be a string",
-            ))),
+            _ => Err(RError("ERR value must be a string")),
         }
     }
 
@@ -54,22 +52,51 @@ impl RedisValueRef {
     }
 }
 
-impl From<String> for RedisValueRef {
-    fn from(s: String) -> Self {
-        RedisValueRef::String(Bytes::from(s))
-    }
+/// Helper functions for constructing RedisValueRef values
+///
+/// Example:
+/// ```
+/// use codecrafters_redis::parser::{RArray, RString};
+///
+/// let response = RArray(vec![
+///     RString("key"),
+///     RArray(vec![RString("field1"), RString("value1")]),
+/// ]);
+/// ```
+/// Create a bulk string
+#[allow(non_snake_case)]
+pub fn RString<S: Into<String>>(s: S) -> RedisValueRef {
+    RedisValueRef::String(Bytes::from(s.into()))
 }
 
-impl From<&str> for RedisValueRef {
-    fn from(s: &str) -> Self {
-        RedisValueRef::String(Bytes::from(s.to_string()))
-    }
+#[allow(non_snake_case)]
+pub fn RArray(items: Vec<RedisValueRef>) -> RedisValueRef {
+    RedisValueRef::Array(items)
 }
 
-impl From<Vec<RedisValueRef>> for RedisValueRef {
-    fn from(v: Vec<RedisValueRef>) -> Self {
-        RedisValueRef::Array(v)
-    }
+#[allow(non_snake_case)]
+pub fn RSimpleString<S: Into<String>>(s: S) -> RedisValueRef {
+    RedisValueRef::SimpleString(Bytes::from(s.into()))
+}
+
+#[allow(non_snake_case)]
+pub fn RError<S: Into<String>>(s: S) -> RedisValueRef {
+    RedisValueRef::Error(Bytes::from(s.into()))
+}
+
+#[allow(non_snake_case)]
+pub fn RInt(i: i64) -> RedisValueRef {
+    RedisValueRef::Int(i)
+}
+
+#[allow(non_snake_case)]
+pub fn RNull() -> RedisValueRef {
+    RedisValueRef::NullBulkString
+}
+
+#[allow(non_snake_case)]
+pub fn RNullArray() -> RedisValueRef {
+    RedisValueRef::NullArray
 }
 
 impl Display for RedisValueRef {
@@ -363,7 +390,7 @@ mod tests {
     #[test]
     fn test_decode_ping() {
         let mut parser = RespParser;
-        let decoded: RedisValueRef = vec!["PING".into()].into();
+        let decoded = RArray(vec![RString("PING")]);
         let mut out = BytesMut::new();
         parser.encode(decoded, &mut out).unwrap();
         assert_eq!(out, BytesMut::from("*1\r\n$4\r\nPING\r\n"));
@@ -375,7 +402,7 @@ mod tests {
         let mut parser = RespParser;
         let result = parser.decode(&mut encoded).unwrap();
 
-        let expected: Option<RedisValueRef> = Some(vec!["ECHO".into(), "hey".into()].into());
+        let expected = Some(RArray(vec![RString("ECHO"), RString("hey")]));
 
         assert_eq!(result, expected);
     }
@@ -383,7 +410,7 @@ mod tests {
     #[test]
     fn test_encode_echo_hey() {
         let mut parser = RespParser;
-        let decoded: RedisValueRef = vec!["ECHO".into(), "hey".into()].into();
+        let decoded = RArray(vec![RString("ECHO"), RString("hey")]);
         let mut out = BytesMut::new();
         parser.encode(decoded, &mut out).unwrap();
         assert_eq!(out, BytesMut::from("*2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n"));

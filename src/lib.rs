@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::parser::RedisValueRef;
+use crate::parser::{RArray, RError, RInt, RNull, RSimpleString, RString, RedisValueRef};
 use crate::streams::StreamCollection;
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -25,24 +25,26 @@ pub enum RedisValue {
 impl From<&RedisValue> for RedisValueRef {
     fn from(value: &RedisValue) -> Self {
         match value {
-            RedisValue::String(s) => RedisValueRef::String(s.clone()),
-            RedisValue::List(items) => items
-                .iter()
-                .map(|item| RedisValueRef::String(item.clone()))
-                .collect::<Vec<RedisValueRef>>()
-                .into(),
-            RedisValue::Stream(stream_collection) => stream_collection
-                .all()
-                .into_iter()
-                .map(|e| e.into())
-                .collect::<Vec<RedisValueRef>>()
-                .into(),
+            RedisValue::String(s) => RString(String::from_utf8_lossy(s).to_string()),
+            RedisValue::List(items) => RArray(
+                items
+                    .iter()
+                    .map(|item| RString(String::from_utf8_lossy(item).to_string()))
+                    .collect(),
+            ),
+            RedisValue::Stream(stream_collection) => RArray(
+                stream_collection
+                    .all()
+                    .into_iter()
+                    .map(|e| e.into())
+                    .collect(),
+            ),
         }
     }
 }
 
 pub fn ref_error(msg: &str) -> RedisValueRef {
-    RedisValueRef::Error(Bytes::from(msg.to_string()))
+    RError(msg)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -118,16 +120,16 @@ impl RedisDb {
 pub type Db = Arc<RedisDb>;
 
 pub fn ping() -> RedisValueRef {
-    RedisValueRef::SimpleString(Bytes::from("PONG"))
+    RSimpleString("PONG")
 }
 
 pub fn echo(arg: String) -> RedisValueRef {
-    arg.into()
+    RString(arg)
 }
 
 pub async fn set(db: &Db, key: String, value: String) -> RedisValueRef {
     db.dict.insert(key, RedisValue::String(Bytes::from(value)));
-    RedisValueRef::SimpleString(Bytes::from("OK"))
+    RSimpleString("OK")
 }
 
 pub async fn set_ex(db: &Db, key: String, value: String, ttl: u64) -> RedisValueRef {
@@ -140,13 +142,13 @@ pub async fn set_ex(db: &Db, key: String, value: String, ttl: u64) -> RedisValue
     db.dict
         .insert(key.clone(), RedisValue::String(Bytes::from(value)));
     db.ttl.insert(key, expiry);
-    RedisValueRef::SimpleString(Bytes::from("OK"))
+    RSimpleString("OK")
 }
 
 pub async fn get(db: &Db, key: String) -> RedisValueRef {
     match db.get_if_valid(&key) {
         Some(value) => RedisValueRef::from(&*value),
-        None => RedisValueRef::NullBulkString,
+        None => RNull(),
     }
 }
 
@@ -159,7 +161,7 @@ pub async fn _type(db: &Db, key: String) -> RedisValueRef {
         },
         None => "none",
     };
-    RedisValueRef::SimpleString(Bytes::from(result))
+    RSimpleString(result)
 }
 
 pub async fn incr(db: &Db, key: String) -> RedisValueRef {
@@ -170,22 +172,20 @@ pub async fn incr(db: &Db, key: String) -> RedisValueRef {
                 let new_value = match new_value.parse::<i64>() {
                     Ok(num) => num,
                     Err(_) => {
-                        return RedisValueRef::Error(
-                            "ERR value is not an integer or out of range".into(),
-                        );
+                        return RError("ERR value is not an integer or out of range");
                     }
                 };
                 new_value + 1
             }
             _ => {
-                return RedisValueRef::Error(Bytes::from("WRONGTYPE"));
+                return RError("WRONGTYPE");
             }
         },
         None => 1,
     };
     db.dict
         .insert(key, RedisValue::String(Bytes::from(result.to_string())));
-    RedisValueRef::Int(result)
+    RInt(result)
 }
 
 pub async fn info(db: &Db, _section: String) -> RedisValueRef {
@@ -201,7 +201,7 @@ pub async fn info(db: &Db, _section: String) -> RedisValueRef {
         master_repl_offset:{}\n",
         role, db.replication_id, db.replication_offset
     );
-    info.into()
+    RString(info)
 }
 
 #[cfg(test)]
@@ -220,10 +220,10 @@ mod tests {
         let value = "value".to_string();
 
         let result = set(&db, key.clone(), value.clone()).await;
-        assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
+        assert_eq!(result, RSimpleString("OK"));
 
         let result = get(&db, key).await;
-        assert_eq!(result, "value".into());
+        assert_eq!(result, RString("value"));
     }
 
     #[tokio::test]
@@ -232,10 +232,10 @@ mod tests {
         let key = "key".to_string();
         let value = "value".to_string();
         let result = set_ex(&db, key.clone(), value.clone(), 1).await;
-        assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
+        assert_eq!(result, RSimpleString("OK"));
         tokio::time::sleep(Duration::from_millis(10)).await;
         let result = get(&db, key).await;
-        assert_eq!(result, RedisValueRef::NullBulkString);
+        assert_eq!(result, RNull());
     }
 
     #[tokio::test]
@@ -244,10 +244,10 @@ mod tests {
         let key = "key".to_string();
         let value = "value".to_string();
         let result = set_ex(&db, key.clone(), value.clone(), 1000000).await;
-        assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
+        assert_eq!(result, RSimpleString("OK"));
 
         let result = get(&db, key).await;
-        assert_eq!(result, "value".into());
+        assert_eq!(result, RString("value"));
     }
 
     #[tokio::test]
@@ -257,13 +257,13 @@ mod tests {
         let value = "test_value".to_string();
 
         let result = set(&db, key.clone(), value.clone()).await;
-        assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
+        assert_eq!(result, RSimpleString("OK"));
 
         let result = _type(&db, key).await;
-        assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("string")));
+        assert_eq!(result, RSimpleString("string"));
 
         let result = _type(&db, "notexist".to_string()).await;
-        assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("none")));
+        assert_eq!(result, RSimpleString("none"));
     }
 
     #[tokio::test]
@@ -271,10 +271,10 @@ mod tests {
         let db = setup();
         let key = "test_key".to_string();
         let result = incr(&db, key.clone()).await;
-        assert_eq!(result, RedisValueRef::Int(1));
+        assert_eq!(result, RInt(1));
 
         let result = incr(&db, key.clone()).await;
-        assert_eq!(result, RedisValueRef::Int(2));
+        assert_eq!(result, RInt(2));
     }
 
     #[tokio::test]
@@ -292,7 +292,7 @@ mod tests {
         // Test From<&RedisValue> for RedisValueRef
         let stored_string = RedisValue::String(Bytes::from("hello"));
         let protocol: RedisValueRef = (&stored_string).into();
-        assert_eq!(protocol, "hello".into());
+        assert_eq!(protocol, RString("hello"));
 
         // Test with list
         let stored_list =
@@ -307,7 +307,7 @@ mod tests {
     #[test]
     fn test_expect_string_helper() {
         // Test successful extraction
-        let value: RedisValueRef = "hello".into();
+        let value = RString("hello");
         let result = value.expect_string();
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Bytes::from("hello"));

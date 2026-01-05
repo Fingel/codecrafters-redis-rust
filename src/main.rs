@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use bytes::Bytes;
 use codecrafters_redis::{
     _type, Db, RedisDb, echo, get, incr, info, lists, ping, replication, set, set_ex, streams,
 };
 use codecrafters_redis::{
     interpreter::RedisCommand,
-    parser::{RedisValueRef, RespParser},
+    parser::{RArray, RError, RSimpleString, RedisValueRef, RespParser},
 };
 use futures::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -23,14 +22,12 @@ async fn process(stream: TcpStream, db: Db) {
                     Ok(command) => match command {
                         RedisCommand::Multi => {
                             if in_transaction {
-                                let resp = RedisValueRef::Error(Bytes::from(
-                                    "ERR MULTI calls can not be nested",
-                                ));
+                                let resp = RError("ERR MULTI calls can not be nested");
                                 transport.send(resp).await.unwrap();
                             } else {
                                 in_transaction = true;
                                 queued_commands.clear();
-                                let result = RedisValueRef::SimpleString(Bytes::from("OK"));
+                                let result = RSimpleString("OK");
                                 transport.send(result).await.unwrap();
                             }
                         }
@@ -43,10 +40,9 @@ async fn process(stream: TcpStream, db: Db) {
                                     results.push(result);
                                 }
 
-                                transport.send(results.into()).await.unwrap();
+                                transport.send(RArray(results)).await.unwrap();
                             } else {
-                                let resp =
-                                    RedisValueRef::Error(Bytes::from("ERR EXEC without MULTI"));
+                                let resp = RError("ERR EXEC without MULTI");
                                 transport.send(resp).await.unwrap();
                             }
                         }
@@ -54,15 +50,10 @@ async fn process(stream: TcpStream, db: Db) {
                             if in_transaction {
                                 in_transaction = false;
                                 queued_commands.clear();
-                                transport
-                                    .send(RedisValueRef::SimpleString(Bytes::from("OK")))
-                                    .await
-                                    .unwrap();
+                                transport.send(RSimpleString("OK")).await.unwrap();
                             } else {
                                 transport
-                                    .send(RedisValueRef::Error(Bytes::from(
-                                        "ERR DISCARD without MULTI",
-                                    )))
+                                    .send(RError("ERR DISCARD without MULTI"))
                                     .await
                                     .unwrap();
                             }
@@ -70,10 +61,7 @@ async fn process(stream: TcpStream, db: Db) {
                         _ => {
                             if in_transaction {
                                 queued_commands.push(command);
-                                transport
-                                    .send(RedisValueRef::SimpleString(Bytes::from("QUEUED")))
-                                    .await
-                                    .unwrap();
+                                transport.send(RSimpleString("QUEUED")).await.unwrap();
                             } else {
                                 let result = handle_command(&db, command).await;
                                 transport.send(result).await.unwrap();
@@ -82,7 +70,7 @@ async fn process(stream: TcpStream, db: Db) {
                     },
                     Err(err) => {
                         eprintln!("Command interpretation error: {}", err);
-                        let resp = RedisValueRef::Error(Bytes::from(format!("ERR {}", err)));
+                        let resp = RError(format!("ERR {}", err));
                         transport.send(resp).await.unwrap();
                     }
                 },

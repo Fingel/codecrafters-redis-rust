@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::parser::RedisValueRef;
+use crate::parser::{RArray, RError, RInt, RNull, RNullArray, RString, RedisValueRef};
 use crate::{Db, RedisValue, get};
 use bytes::Bytes;
 
@@ -53,16 +53,14 @@ pub async fn rpush(db: &Db, key: String, value: Vec<String>) -> RedisValueRef {
         Some(mut entry) => match &mut *entry {
             RedisValue::List(list) => {
                 list.extend(value.clone());
-                RedisValueRef::Int(list.len() as i64)
+                RInt(list.len() as i64)
             }
-            _ => RedisValueRef::Error(Bytes::from(
-                "Attempted to push to an array of the wrong type",
-            )),
+            _ => RError("Attempted to push to an array of the wrong type"),
         },
         None => {
             let num_items = value.len() as i64;
             db.dict.insert(key.clone(), RedisValue::List(value.into()));
-            RedisValueRef::Int(num_items)
+            RInt(num_items)
         }
     };
     notify_waiters(db, &key).await;
@@ -77,16 +75,14 @@ pub async fn lpush(db: &Db, key: String, value: Vec<String>) -> RedisValueRef {
                 for item in value.into_iter() {
                     list.push_front(item);
                 }
-                RedisValueRef::Int(list.len() as i64)
+                RInt(list.len() as i64)
             }
-            _ => RedisValueRef::Error(Bytes::from(
-                "Attempted to push to an array of the wrong type",
-            )),
+            _ => RError("Attempted to push to an array of the wrong type"),
         },
         None => {
             let num_items = value.len() as i64;
             db.dict.insert(key.clone(), RedisValue::List(value.into()));
-            RedisValueRef::Int(num_items)
+            RInt(num_items)
         }
     };
     notify_waiters(db, &key).await;
@@ -126,26 +122,29 @@ pub async fn lrange(db: &Db, key: String, start: i64, stop: i64) -> RedisValueRe
         },
         None => vec![],
     };
-    bytes
-        .into_iter()
-        .map(RedisValueRef::String)
-        .collect::<Vec<RedisValueRef>>()
-        .into()
+    RArray(
+        bytes
+            .into_iter()
+            .map(|b| RString(String::from_utf8_lossy(&b).to_string()))
+            .collect(),
+    )
 }
 
 pub async fn llen(db: &Db, key: String) -> RedisValueRef {
-    match db.get_if_valid(&key) {
+    let key_string = key;
+    match db.get_if_valid(&key_string) {
         Some(entry) => match &*entry {
-            RedisValue::List(list) => RedisValueRef::Int(list.len() as i64),
-            _ => RedisValueRef::Int(0),
+            RedisValue::List(list) => RInt(list.len() as i64),
+            _ => RInt(0),
         },
-        None => RedisValueRef::Int(0),
+        None => RInt(0),
     }
 }
 
 pub async fn lpop(db: &Db, key: String, num_elements: Option<u64>) -> RedisValueRef {
+    let key_string = key;
     let result = {
-        match db.get_mut_if_valid(&key) {
+        match db.get_mut_if_valid(&key_string) {
             Some(mut entry) => match &mut *entry {
                 RedisValue::List(list) if !list.is_empty() => {
                     let num_elements = (num_elements.unwrap_or(1) as usize).min(list.len());
@@ -153,12 +152,13 @@ pub async fn lpop(db: &Db, key: String, num_elements: Option<u64>) -> RedisValue
                     let is_now_empty = list.is_empty();
 
                     let response = if ret.len() == 1 {
-                        RedisValueRef::String(ret[0].clone())
+                        RString(String::from_utf8_lossy(&ret[0]).to_string())
                     } else {
-                        ret.into_iter()
-                            .map(RedisValueRef::String)
-                            .collect::<Vec<RedisValueRef>>()
-                            .into()
+                        RArray(
+                            ret.into_iter()
+                                .map(|b| RString(String::from_utf8_lossy(&b).to_string()))
+                                .collect(),
+                        )
                     };
 
                     Some((response, is_now_empty))
@@ -172,11 +172,11 @@ pub async fn lpop(db: &Db, key: String, num_elements: Option<u64>) -> RedisValue
     // Handle the result and potentially remove the key
     match result {
         Some((response, true)) => {
-            db.dict.remove(&key);
+            db.dict.remove(&key_string);
             response
         }
         Some((response, false)) => response,
-        None => RedisValueRef::NullBulkString,
+        None => RNull(),
     }
 }
 
@@ -200,13 +200,16 @@ pub async fn blpop(db: &Db, key: String, timeout: Option<f64>) -> RedisValueRef 
                 rx.await.ok()
             };
             match res {
-                Some(val) => vec![key.into(), RedisValueRef::String(val)].into(),
-                None => RedisValueRef::NullArray,
+                Some(val) => RArray(vec![
+                    RString(key),
+                    RString(String::from_utf8_lossy(&val).to_string()),
+                ]),
+                None => RNullArray(),
             }
         }
         _ => {
             let val = lpop(db, key.clone(), Some(1)).await;
-            vec![key.into(), val].into()
+            RArray(vec![RString(key), val])
         }
     }
 }
@@ -216,6 +219,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::parser::RSimpleString;
     use crate::{RedisDb, set};
 
     fn setup() -> Arc<RedisDb> {
@@ -229,16 +233,16 @@ mod tests {
         let value = vec!["value1".to_string()];
 
         let result = rpush(&db, key.clone(), value).await;
-        assert_eq!(result, RedisValueRef::Int(1));
+        assert_eq!(result, RInt(1));
 
         // Push another item
         let value2 = vec!["value2".to_string()];
         let result = rpush(&db, key.clone(), value2).await;
-        assert_eq!(result, RedisValueRef::Int(2));
+        assert_eq!(result, RInt(2));
 
         // Get should return the list as an array
         let result = get(&db, key).await;
-        let expected: RedisValueRef = vec!["value1".into(), "value2".into()].into();
+        let expected = RArray(vec![RString("value1"), RString("value2")]);
         assert_eq!(result, expected);
     }
 
@@ -250,7 +254,7 @@ mod tests {
 
         // Set a string value
         let result = set(&db, key.clone(), value).await;
-        assert_eq!(result, RedisValueRef::SimpleString(Bytes::from("OK")));
+        assert_eq!(result, RSimpleString("OK"));
 
         // Try to rpush to a string key - should fail
         let list_value = vec!["list_item".to_string()];
@@ -268,11 +272,11 @@ mod tests {
         let value = vec!["value1".to_string(), "value2".to_string()];
 
         let result = rpush(&db, key.clone(), value).await;
-        assert_eq!(result, RedisValueRef::Int(2));
+        assert_eq!(result, RInt(2));
 
         // Get should return the list as an array
         let result = get(&db, key).await;
-        let expected: RedisValueRef = vec!["value1".into(), "value2".into()].into();
+        let expected = RArray(vec![RString("value1"), RString("value2")]);
         assert_eq!(result, expected);
     }
 
@@ -283,14 +287,14 @@ mod tests {
         let value = vec!["c".to_string()];
 
         let result = lpush(&db, key.clone(), value).await;
-        assert_eq!(result, RedisValueRef::Int(1));
+        assert_eq!(result, RInt(1));
 
         let value = vec!["b".to_string(), "a".to_string()];
         let result = lpush(&db, key.clone(), value).await;
-        assert_eq!(result, RedisValueRef::Int(3));
+        assert_eq!(result, RInt(3));
 
         let result = lrange(&db, key, 0, -1).await;
-        let expected: RedisValueRef = vec!["a".into(), "b".into(), "c".into()].into();
+        let expected = RArray(vec![RString("a"), RString("b"), RString("c")]);
         assert_eq!(result, expected);
     }
 
@@ -305,10 +309,10 @@ mod tests {
         ];
 
         let result = rpush(&db, key.clone(), value).await;
-        assert_eq!(result, RedisValueRef::Int(3));
+        assert_eq!(result, RInt(3));
 
         let result = lrange(&db, key, 0, 1).await;
-        let expected: RedisValueRef = vec!["value1".into(), "value2".into()].into();
+        let expected = RArray(vec![RString("value1"), RString("value2")]);
         assert_eq!(result, expected);
     }
 
@@ -323,11 +327,14 @@ mod tests {
         ];
 
         let result = rpush(&db, key.clone(), value).await;
-        assert_eq!(result, RedisValueRef::Int(3));
+        assert_eq!(result, RInt(3));
 
         let result = lrange(&db, key, 0, 10).await;
-        let expected: RedisValueRef =
-            vec!["value1".into(), "value2".into(), "value3".into()].into();
+        let expected = RArray(vec![
+            RString("value1"),
+            RString("value2"),
+            RString("value3"),
+        ]);
         assert_eq!(result, expected);
     }
 
@@ -343,11 +350,11 @@ mod tests {
             "e".to_string(),
         ];
         let result = rpush(&db, key.clone(), value).await;
-        assert_eq!(result, RedisValueRef::Int(5));
+        assert_eq!(result, RInt(5));
 
         // Matches example test on #RI1
         let result = lrange(&db, key, 2, -1).await;
-        let expected: RedisValueRef = vec!["c".into(), "d".into(), "e".into()].into();
+        let expected = RArray(vec![RString("c"), RString("d"), RString("e")]);
         assert_eq!(result, expected);
     }
 
@@ -362,15 +369,15 @@ mod tests {
             "d".to_string(),
         ];
         let result = rpush(&db, key.clone(), value).await;
-        assert_eq!(result, RedisValueRef::Int(4));
+        assert_eq!(result, RInt(4));
 
         // Matches example test on #FV6
         let result = llen(&db, key).await;
-        assert_eq!(result, RedisValueRef::Int(4));
+        assert_eq!(result, RInt(4));
 
         // Non-existent key
         let result = llen(&db, "nonexistent".to_string()).await;
-        assert_eq!(result, RedisValueRef::Int(0));
+        assert_eq!(result, RInt(0));
     }
 
     #[tokio::test]
@@ -379,19 +386,19 @@ mod tests {
         let key = "key".to_string();
         let value = vec!["a".to_string()];
         let result = rpush(&db, key.clone(), value).await;
-        assert_eq!(result, RedisValueRef::Int(1));
+        assert_eq!(result, RInt(1));
 
         // Matches example test on #EF1
         let result = lpop(&db, key.clone(), None).await;
-        assert_eq!(result, "a".into());
+        assert_eq!(result, RString("a"));
 
         // Should now be empty
         let result = lpop(&db, key, None).await;
-        assert_eq!(result, RedisValueRef::NullBulkString);
+        assert_eq!(result, RNull());
 
         // Non-existent key
         let result = lpop(&db, "nonexistent".to_string(), None).await;
-        assert_eq!(result, RedisValueRef::NullBulkString);
+        assert_eq!(result, RNull());
     }
 
     #[tokio::test]
@@ -405,21 +412,21 @@ mod tests {
             "d".to_string(),
         ];
         let result = rpush(&db, key.clone(), value).await;
-        assert_eq!(result, RedisValueRef::Int(4));
+        assert_eq!(result, RInt(4));
 
         // Matches example test on #JP1
         let result = lpop(&db, key.clone(), Some(2)).await;
-        let expected: RedisValueRef = vec!["a".into(), "b".into()].into();
+        let expected = RArray(vec![RString("a"), RString("b")]);
         assert_eq!(result, expected);
 
         // List should now only contain c and d
         let result = lrange(&db, key.clone(), 0, -1).await;
-        let expected: RedisValueRef = vec!["c".into(), "d".into()].into();
+        let expected = RArray(vec![RString("c"), RString("d")]);
         assert_eq!(result, expected);
 
         // Should remove all elements
         let result = lpop(&db, key.clone(), Some(100)).await;
-        let expected: RedisValueRef = vec!["c".into(), "d".into()].into();
+        let expected = RArray(vec![RString("c"), RString("d")]);
         assert_eq!(result, expected);
     }
 
@@ -447,7 +454,7 @@ mod tests {
         match result {
             RedisValueRef::Array(items) => {
                 assert_eq!(items.len(), 2);
-                assert_eq!(items[1], "delayed_value".into());
+                assert_eq!(items[1], RString("delayed_value"));
             }
             _ => panic!("Expected array result"),
         }

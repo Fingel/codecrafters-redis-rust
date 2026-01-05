@@ -1,4 +1,8 @@
-use crate::{Db, RedisValue, parser::RedisValueRef, ref_error};
+use crate::{
+    Db, RedisValue,
+    parser::{RArray, RNullArray, RString, RedisValueRef},
+    ref_error,
+};
 use bytes::Bytes;
 use futures::stream::{FuturesUnordered, StreamExt};
 use std::{
@@ -108,19 +112,19 @@ impl Default for StreamCollection {
 impl From<(&StreamId, &StreamData)> for RedisValueRef {
     fn from(value: (&StreamId, &StreamData)) -> Self {
         let (id, data) = value;
-        vec![
-            RedisValueRef::String(id.to_bytes()),
-            data.iter()
-                .flat_map(|(k, v)| {
-                    vec![
-                        RedisValueRef::String(k.clone()),
-                        RedisValueRef::String(v.clone()),
-                    ]
-                })
-                .collect::<Vec<RedisValueRef>>()
-                .into(),
-        ]
-        .into()
+        RArray(vec![
+            RString(String::from_utf8_lossy(&id.to_bytes()).to_string()),
+            RArray(
+                data.iter()
+                    .flat_map(|(k, v)| {
+                        vec![
+                            RString(String::from_utf8_lossy(k).to_string()),
+                            RString(String::from_utf8_lossy(v).to_string()),
+                        ]
+                    })
+                    .collect(),
+            ),
+        ])
     }
 }
 
@@ -143,13 +147,10 @@ fn notify_stream_waiters(db: &Db, key: &str, stream_id: &StreamId, fields: &Stre
     if let Some(waiter_queue) = waiters_guard.get_mut(key) {
         for tx in waiter_queue.drain(..) {
             if !tx.is_closed() {
-                let _ = tx.send(
-                    vec![
-                        key.to_string().into(),
-                        vec![(stream_id, fields).into()].into(),
-                    ]
-                    .into(),
-                );
+                let _ = tx.send(RArray(vec![
+                    RString(key.to_string()),
+                    RArray(vec![(stream_id, fields).into()]),
+                ]));
             }
         }
     }
@@ -189,7 +190,7 @@ pub async fn xadd(
                 notify_stream_waiters(db, &key_string, &stream_id, &fields);
                 existing_stream.insert(stream_id.clone(), fields);
 
-                RedisValueRef::String(stream_id.to_bytes())
+                RString(String::from_utf8_lossy(&stream_id.to_bytes()).to_string())
             }
             _ => ref_error("Attempted add to non-stream value"),
         },
@@ -198,7 +199,7 @@ pub async fn xadd(
             let new_id = StreamId::new(ms, seq);
             new_map.insert(new_id.clone(), fields);
             db.dict.insert(key_string, RedisValue::Stream(new_map));
-            RedisValueRef::String(new_id.to_bytes())
+            RString(String::from_utf8_lossy(&new_id.to_bytes()).to_string())
         }
     }
 }
@@ -218,12 +219,7 @@ pub async fn xrange(db: &Db, key: String, start: StreamIdIn, stop: StreamIdIn) -
                     ms: stop_ms.unwrap_or(u64::MAX),
                     seq: stop_seq.unwrap_or(u64::MAX),
                 };
-                stream
-                    .0
-                    .range(start..=stop)
-                    .map(|e| e.into())
-                    .collect::<Vec<RedisValueRef>>()
-                    .into()
+                RArray(stream.0.range(start..=stop).map(|e| e.into()).collect())
             }
             _ => ref_error("Attempted range on non-stream value"),
         },
@@ -258,7 +254,7 @@ async fn xread_results(
                         .map(|e| e.into())
                         .collect();
                     if !results.is_empty() {
-                        result.push(vec![key.clone().into(), results.into()].into());
+                        result.push(RArray(vec![RString(key.clone()), RArray(results)]));
                     }
                 }
                 _ => return Err(ref_error("Attempted to read non-stream value")),
@@ -271,7 +267,7 @@ async fn xread_results(
 
 pub async fn xread(db: &Db, streams: Vec<(String, StreamIdIn)>) -> RedisValueRef {
     match xread_results(db, &streams, false).await {
-        Ok(result) => result.into(),
+        Ok(result) => RArray(result),
         Err(err) => err,
     }
 }
@@ -284,7 +280,7 @@ pub async fn xread_block(
     match xread_results(db, &streams, true).await {
         Ok(result) => {
             if !result.is_empty() {
-                result.into()
+                RArray(result)
             } else {
                 let mut receivers = Vec::new();
                 for (key, _) in streams {
@@ -303,16 +299,16 @@ pub async fn xread_block(
                     if let Ok(Some(Ok(val))) =
                         tokio::time::timeout(Duration::from_millis(timeout), futs.next()).await
                     {
-                        return vec![val].into();
+                        return RArray(vec![val]);
                     }
                 } else {
                     while let Some(result) = futs.next().await {
                         if let Ok(val) = result {
-                            return vec![val].into();
+                            return RArray(vec![val]);
                         }
                     }
                 }
-                RedisValueRef::NullArray
+                RNullArray()
             }
         }
 
@@ -406,7 +402,7 @@ mod tests {
         ];
 
         let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
-        assert_eq!(result, "1-1".into());
+        assert_eq!(result, RString("1-1"));
 
         let redis_val = db.get_if_valid(&key).unwrap().clone();
         let stream_id = StreamId { ms: 1, seq: 1 };
@@ -433,10 +429,10 @@ mod tests {
         let fields = vec![];
 
         let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
-        assert_eq!(result, "1-1".into());
+        assert_eq!(result, RString("1-1"));
 
         let result = xadd(&db, key.clone(), (Some(1), None), fields.clone()).await;
-        assert_eq!(result, "1-2".into());
+        assert_eq!(result, RString("1-2"));
     }
 
     #[tokio::test]
@@ -448,7 +444,7 @@ mod tests {
         let fields = vec![];
 
         let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
-        assert_eq!(result, "1-1".into());
+        assert_eq!(result, RString("1-1"));
 
         let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
         assert_eq!(
@@ -468,7 +464,7 @@ mod tests {
         let fields = vec![];
 
         let result = xadd(&db, key.clone(), (time, seq), fields.clone()).await;
-        assert_eq!(result, "2-2".into());
+        assert_eq!(result, RString("2-2"));
 
         // less ms
         let result = xadd(&db, key.clone(), (Some(1), Some(3)), fields.clone()).await;
@@ -521,109 +517,90 @@ mod tests {
         }
 
         let result = xrange(&db, key.clone(), (Some(0), Some(0)), (Some(2), Some(2))).await;
-        let expected: RedisValueRef = vec![
-            vec![
-                "1-0".into(),
-                vec![
-                    "1-0-field1".into(),
-                    "1-0value1".into(),
-                    "1-0-field2".into(),
-                    "1-0value2".into(),
-                ]
-                .into(),
-            ]
-            .into(),
-            vec![
-                "2-0".into(),
-                vec![
-                    "2-0-field1".into(),
-                    "2-0value1".into(),
-                    "2-0-field2".into(),
-                    "2-0value2".into(),
-                ]
-                .into(),
-            ]
-            .into(),
-            vec![
-                "2-2".into(),
-                vec![
-                    "2-2-field1".into(),
-                    "2-2value1".into(),
-                    "2-2-field2".into(),
-                    "2-2value2".into(),
-                ]
-                .into(),
-            ]
-            .into(),
-        ]
-        .into();
+        let expected = RArray(vec![
+            RArray(vec![
+                RString("1-0"),
+                RArray(vec![
+                    RString("1-0-field1"),
+                    RString("1-0value1"),
+                    RString("1-0-field2"),
+                    RString("1-0value2"),
+                ]),
+            ]),
+            RArray(vec![
+                RString("2-0"),
+                RArray(vec![
+                    RString("2-0-field1"),
+                    RString("2-0value1"),
+                    RString("2-0-field2"),
+                    RString("2-0value2"),
+                ]),
+            ]),
+            RArray(vec![
+                RString("2-2"),
+                RArray(vec![
+                    RString("2-2-field1"),
+                    RString("2-2value1"),
+                    RString("2-2-field2"),
+                    RString("2-2value2"),
+                ]),
+            ]),
+        ]);
         assert_eq!(result, expected);
 
         let result = xrange(&db, key.clone(), (Some(0), Some(0)), (Some(2), Some(1))).await;
-        let expected: RedisValueRef = vec![
-            vec![
-                "1-0".into(),
-                vec![
-                    "1-0-field1".into(),
-                    "1-0value1".into(),
-                    "1-0-field2".into(),
-                    "1-0value2".into(),
-                ]
-                .into(),
-            ]
-            .into(),
-            vec![
-                "2-0".into(),
-                vec![
-                    "2-0-field1".into(),
-                    "2-0value1".into(),
-                    "2-0-field2".into(),
-                    "2-0value2".into(),
-                ]
-                .into(),
-            ]
-            .into(),
-        ]
-        .into();
+        let expected = RArray(vec![
+            RArray(vec![
+                RString("1-0"),
+                RArray(vec![
+                    RString("1-0-field1"),
+                    RString("1-0value1"),
+                    RString("1-0-field2"),
+                    RString("1-0value2"),
+                ]),
+            ]),
+            RArray(vec![
+                RString("2-0"),
+                RArray(vec![
+                    RString("2-0-field1"),
+                    RString("2-0value1"),
+                    RString("2-0-field2"),
+                    RString("2-0value2"),
+                ]),
+            ]),
+        ]);
         assert_eq!(result, expected);
 
         let result = xrange(&db, key.clone(), (None, None), (None, None)).await;
-        let expected: RedisValueRef = vec![
-            vec![
-                "1-0".into(),
-                vec![
-                    "1-0-field1".into(),
-                    "1-0value1".into(),
-                    "1-0-field2".into(),
-                    "1-0value2".into(),
-                ]
-                .into(),
-            ]
-            .into(),
-            vec![
-                "2-0".into(),
-                vec![
-                    "2-0-field1".into(),
-                    "2-0value1".into(),
-                    "2-0-field2".into(),
-                    "2-0value2".into(),
-                ]
-                .into(),
-            ]
-            .into(),
-            vec![
-                "2-2".into(),
-                vec![
-                    "2-2-field1".into(),
-                    "2-2value1".into(),
-                    "2-2-field2".into(),
-                    "2-2value2".into(),
-                ]
-                .into(),
-            ]
-            .into(),
-        ]
-        .into();
+        let expected = RArray(vec![
+            RArray(vec![
+                RString("1-0"),
+                RArray(vec![
+                    RString("1-0-field1"),
+                    RString("1-0value1"),
+                    RString("1-0-field2"),
+                    RString("1-0value2"),
+                ]),
+            ]),
+            RArray(vec![
+                RString("2-0"),
+                RArray(vec![
+                    RString("2-0-field1"),
+                    RString("2-0value1"),
+                    RString("2-0-field2"),
+                    RString("2-0value2"),
+                ]),
+            ]),
+            RArray(vec![
+                RString("2-2"),
+                RArray(vec![
+                    RString("2-2-field1"),
+                    RString("2-2value1"),
+                    RString("2-2-field2"),
+                    RString("2-2value2"),
+                ]),
+            ]),
+        ]);
         assert_eq!(result, expected);
     }
 
@@ -700,89 +677,72 @@ mod tests {
             ],
         )
         .await;
-        let expected: RedisValueRef = vec![
-            vec![
-                key1.into(),
-                vec![
-                    vec![
-                        "1-0".into(),
-                        vec![
-                            "1-1-0-field1".into(),
-                            "1-1-0value1".into(),
-                            "1-1-0-field2".into(),
-                            "1-1-0value2".into(),
-                        ]
-                        .into(),
-                    ]
-                    .into(),
-                    vec![
-                        "2-0".into(),
-                        vec![
-                            "1-2-0-field1".into(),
-                            "1-2-0value1".into(),
-                            "1-2-0-field2".into(),
-                            "1-2-0value2".into(),
-                        ]
-                        .into(),
-                    ]
-                    .into(),
-                    vec![
-                        "2-2".into(),
-                        vec![
-                            "1-2-2-field1".into(),
-                            "1-2-2value1".into(),
-                            "1-2-2-field2".into(),
-                            "1-2-2value2".into(),
-                        ]
-                        .into(),
-                    ]
-                    .into(),
-                ]
-                .into(),
-            ]
-            .into(),
-            vec![
-                key2.into(),
-                vec![
-                    vec![
-                        "1-0".into(),
-                        vec![
-                            "2-1-0-field1".into(),
-                            "2-1-0value1".into(),
-                            "2-1-0-field2".into(),
-                            "2-1-0value2".into(),
-                        ]
-                        .into(),
-                    ]
-                    .into(),
-                    vec![
-                        "2-0".into(),
-                        vec![
-                            "2-2-0-field1".into(),
-                            "2-2-0value1".into(),
-                            "2-2-0-field2".into(),
-                            "2-2-0value2".into(),
-                        ]
-                        .into(),
-                    ]
-                    .into(),
-                    vec![
-                        "2-2".into(),
-                        vec![
-                            "2-2-2-field1".into(),
-                            "2-2-2value1".into(),
-                            "2-2-2-field2".into(),
-                            "2-2-2value2".into(),
-                        ]
-                        .into(),
-                    ]
-                    .into(),
-                ]
-                .into(),
-            ]
-            .into(),
-        ]
-        .into();
+        let expected = RArray(vec![
+            RArray(vec![
+                RString(key1),
+                RArray(vec![
+                    RArray(vec![
+                        RString("1-0"),
+                        RArray(vec![
+                            RString("1-1-0-field1"),
+                            RString("1-1-0value1"),
+                            RString("1-1-0-field2"),
+                            RString("1-1-0value2"),
+                        ]),
+                    ]),
+                    RArray(vec![
+                        RString("2-0"),
+                        RArray(vec![
+                            RString("1-2-0-field1"),
+                            RString("1-2-0value1"),
+                            RString("1-2-0-field2"),
+                            RString("1-2-0value2"),
+                        ]),
+                    ]),
+                    RArray(vec![
+                        RString("2-2"),
+                        RArray(vec![
+                            RString("1-2-2-field1"),
+                            RString("1-2-2value1"),
+                            RString("1-2-2-field2"),
+                            RString("1-2-2value2"),
+                        ]),
+                    ]),
+                ]),
+            ]),
+            RArray(vec![
+                RString(key2),
+                RArray(vec![
+                    RArray(vec![
+                        RString("1-0"),
+                        RArray(vec![
+                            RString("2-1-0-field1"),
+                            RString("2-1-0value1"),
+                            RString("2-1-0-field2"),
+                            RString("2-1-0value2"),
+                        ]),
+                    ]),
+                    RArray(vec![
+                        RString("2-0"),
+                        RArray(vec![
+                            RString("2-2-0-field1"),
+                            RString("2-2-0value1"),
+                            RString("2-2-0-field2"),
+                            RString("2-2-0value2"),
+                        ]),
+                    ]),
+                    RArray(vec![
+                        RString("2-2"),
+                        RArray(vec![
+                            RString("2-2-2-field1"),
+                            RString("2-2-2value1"),
+                            RString("2-2-2-field2"),
+                            RString("2-2-2value2"),
+                        ]),
+                    ]),
+                ]),
+            ]),
+        ]);
         assert_eq!(result, expected);
     }
 
@@ -811,24 +771,18 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert!(elapsed < Duration::from_millis(2000));
-        let expected: RedisValueRef = vec![
-            key.clone().into(),
-            vec![
-                vec![
-                    "2-1".into(),
-                    vec![
-                        "field1".into(),
-                        "value1".into(),
-                        "field2".into(),
-                        "value2".into(),
-                    ]
-                    .into(),
-                ]
-                .into(),
-            ]
-            .into(),
-        ]
-        .into();
+        let expected = RArray(vec![
+            RString(key.clone()),
+            RArray(vec![RArray(vec![
+                RString("2-1"),
+                RArray(vec![
+                    RString("field1"),
+                    RString("value1"),
+                    RString("field2"),
+                    RString("value2"),
+                ]),
+            ])]),
+        ]);
         match result {
             RedisValueRef::Array(items) => {
                 assert_eq!(items[0], expected);

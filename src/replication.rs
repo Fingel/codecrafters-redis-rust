@@ -1,6 +1,6 @@
 use crate::{
     interpreter::RedisCommand,
-    parser::{RedisValueRef, RespParser},
+    parser::{RSimpleString, RedisValueRef, RespParser},
 };
 
 use futures::{SinkExt, StreamExt};
@@ -103,9 +103,9 @@ pub async fn handshake(
 }
 
 pub async fn replconf_resp(_key: String, _value: String) -> RedisValueRef {
-    RedisValueRef::SimpleString("OK".into())
+    RSimpleString("OK")
 }
 
 pub async fn psync_resp(_id: String, _offset: i64) -> RedisValueRef {
-    RedisValueRef::SimpleString("FULLSYNC 0 0".into())
+    RSimpleString("FULLSYNC 0 0")
 }

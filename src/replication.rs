@@ -32,10 +32,13 @@ pub async fn handshake(
     master_port: u16,
     listen_port: u16,
 ) -> Result<(), ReplicationError> {
+    // Setup connection to master
     let conn = TcpStream::connect((master_addr, master_port))
         .await
         .map_err(|_| ReplicationError::HandshakeFailed("Failed to connect to master".into()))?;
     let mut transport = RespParser.framed(conn);
+
+    // Start handshake - send PING and expect PONG
     transport
         .send(RedisCommand::Ping.try_into().unwrap())
         .await?;
@@ -47,11 +50,46 @@ pub async fn handshake(
         ));
     }
 
-    let replconf = RedisValueRef::Array(vec![
-        RedisValueRef::String(Bytes::from("REPLCONF")),
-        RedisValueRef::String(Bytes::from("listening-port")),
-        RedisValueRef::String(Bytes::from(listen_port.to_string())),
-    ]);
-    transport.send(replconf).await?;
+    // Send REPLCONF listening-port and expect OK
+    transport
+        .send(
+            RedisCommand::ReplConf(
+                Bytes::from("listening-port"),
+                Bytes::from(listen_port.to_string()),
+            )
+            .try_into()
+            .unwrap(),
+        )
+        .await?;
+
+    let resp = get_next_response(&mut transport).await?;
+
+    if &resp.as_string().unwrap_or_default() != "OK" {
+        return Err(ReplicationError::HandshakeFailed(
+            "Didn't get a OK response for replconf port".into(),
+        ));
+    }
+
+    // Send REPLCONF capa and expect OK
+    transport
+        .send(
+            RedisCommand::ReplConf(Bytes::from("capa"), Bytes::from("psync2"))
+                .try_into()
+                .unwrap(),
+        )
+        .await?;
+
+    let resp = get_next_response(&mut transport).await?;
+
+    if &resp.as_string().unwrap_or_default() != "OK" {
+        return Err(ReplicationError::HandshakeFailed(
+            "Didn't get a OK response for replconf capa".into(),
+        ));
+    }
+
     Ok(())
+}
+
+pub async fn replconf_resp(_key: Bytes, _value: Bytes) -> RedisValueRef {
+    RedisValueRef::SimpleString("OK".into())
 }

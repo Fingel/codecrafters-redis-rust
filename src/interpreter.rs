@@ -25,6 +25,7 @@ pub enum RedisCommand {
     Exec,
     Discard,
     Info(Bytes),
+    ReplConf(Bytes, Bytes),
 }
 
 #[derive(Debug, Error, PartialEq, Clone)]
@@ -118,6 +119,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "EXEC" => Ok(RedisCommand::Exec),
                     "DISCARD" => Ok(RedisCommand::Discard),
                     "INFO" => info(&args),
+                    "REPLCONF" => replconf(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -134,6 +136,11 @@ impl TryFrom<RedisCommand> for RedisValueRef {
             RedisCommand::Ping => {
                 RedisValueRef::Array(vec![RedisValueRef::String(Bytes::from("PING"))])
             }
+            RedisCommand::ReplConf(key, value) => RedisValueRef::Array(vec![
+                RedisValueRef::String(Bytes::from("REPLCONF")),
+                RedisValueRef::String(key),
+                RedisValueRef::String(value),
+            ]),
             _ => {
                 return Err(CmdError::InvalidCommandType);
             }
@@ -377,6 +384,16 @@ fn info(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
     };
 
     Ok(RedisCommand::Info(section))
+}
+
+fn replconf(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 3 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let key = extract_string_arg(&args[1], "key")?;
+        let value = extract_string_arg(&args[2], "value")?;
+        Ok(RedisCommand::ReplConf(key, value))
+    }
 }
 
 #[cfg(test)]

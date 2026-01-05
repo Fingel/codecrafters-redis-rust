@@ -67,14 +67,21 @@ async fn process(stream: TcpStream, db: Db) {
                             loop {
                                 if let Some(command) = rx.recv().await {
                                     println!("Master - Replicating command: {:?}", command.clone());
-                                    let r_value: RedisValueRef = match command.try_into() {
-                                        Ok(val) => val,
-                                        Err(_) => {
-                                            eprintln!("Command not available for replication");
-                                            continue;
-                                        }
-                                    };
-                                    transport.send(r_value).await.unwrap();
+                                    if command.can_replicate() {
+                                        let r_value: RedisValueRef = match command.try_into() {
+                                            Ok(val) => val,
+                                            Err(_) => {
+                                                eprintln!("Command serialization not implemented");
+                                                continue;
+                                            }
+                                        };
+                                        transport.send(r_value).await.unwrap();
+                                    } else {
+                                        println!(
+                                            "Master - Skipping non-replicable command: {:?}",
+                                            command
+                                        );
+                                    }
                                 }
                             }
                         }

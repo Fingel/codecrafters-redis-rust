@@ -31,6 +31,12 @@ pub enum RedisCommand {
     Psync(String, i64),
 }
 
+impl RedisCommand {
+    pub fn can_replicate(&self) -> bool {
+        matches!(self, RedisCommand::Set(_, _) | RedisCommand::SetEx(_, _, _))
+    }
+}
+
 #[derive(Debug, Error, PartialEq, Clone)]
 pub enum CmdError {
     #[error("commands must start with a string")]
@@ -127,6 +133,12 @@ impl TryFrom<RedisCommand> for RedisValueRef {
             RedisCommand::Set(key, value) => {
                 RArray(vec![RString("SET"), RString(key), RString(value)])
             }
+            RedisCommand::SetEx(key, value, expire) => RArray(vec![
+                RString("SET"),
+                RString(key),
+                RString(value),
+                RString(expire.to_string()),
+            ]),
             RedisCommand::ReplConf(key, value) => {
                 RArray(vec![RString("REPLCONF"), RString(key), RString(value)])
             }

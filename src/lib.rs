@@ -10,6 +10,7 @@ use dashmap::DashMap;
 pub mod interpreter;
 pub mod lists;
 pub mod parser;
+pub mod replication;
 pub mod streams;
 
 // Storage Type

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use codecrafters_redis::{
-    _type, Db, RedisDb, echo, get, incr, info, lists, ping, set, set_ex, streams,
+    _type, Db, RedisDb, echo, get, incr, info, lists, ping, replication, set, set_ex, streams,
 };
 use codecrafters_redis::{
     interpreter::{RedisCommand, RedisInterpreter},
@@ -148,6 +148,12 @@ async fn main() {
         .await
         .unwrap();
     let db = Arc::new(RedisDb::new(replica_of));
+
+    if let Some((master_addr, master_port)) = db.replica_of.clone() {
+        tokio::spawn(async move {
+            replication::handshake(master_addr, master_port).await;
+        });
+    }
 
     loop {
         let stream = listener.accept().await;

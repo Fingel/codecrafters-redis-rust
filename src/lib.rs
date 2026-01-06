@@ -149,6 +149,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Info(section) => info(db, section).await,
         RedisCommand::ReplConf(key, value) => replication::replconf_resp(key, value).await,
         RedisCommand::Psync(_id, _offset) => unreachable!(),
+        RedisCommand::RdbPayload(payload) => replication::set_rdb_payload(db, payload).await,
     }
 }
 

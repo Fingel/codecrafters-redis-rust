@@ -276,7 +276,12 @@ fn bulk_string(buf: &BytesMut, pos: usize) -> RedisResult {
                 // We have enough bytes, so we can generate the correct type.
                 let bb = RedisBufSplit::String(BufSplit(pos, total_size));
                 // total_size + 2 == ...bulkstring\r\n<HERE> -- after CLRF
-                Ok(Some((total_size + 2, bb)))
+                if buf[total_size] != b'\r' && buf[total_size + 1] != b'\n' {
+                    // This is probably the RDB payload
+                    Ok(Some((total_size, bb)))
+                } else {
+                    Ok(Some((total_size + 2, bb)))
+                }
             }
         }
         // We recieved a garbage size (size < -1), so error out

@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use thiserror::Error;
 
 use crate::{
@@ -29,6 +30,7 @@ pub enum RedisCommand {
     Info(String),
     ReplConf(String, String),
     Psync(String, i64),
+    RdbPayload(Bytes),
 }
 
 impl RedisCommand {
@@ -117,6 +119,13 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "REPLCONF" => replconf(&args),
                     "PSYNC" => psync(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
+                }
+            }
+            RedisValueRef::String(s) => {
+                if s.starts_with(b"REDIS") {
+                    Ok(RedisCommand::RdbPayload(s))
+                } else {
+                    Err(CmdError::InvalidCommandType)
                 }
             }
             _ => Err(CmdError::InvalidCommandType),

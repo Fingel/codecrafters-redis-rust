@@ -110,3 +110,9 @@ pub async fn psync_resp(db: &Db, _id: String, _offset: i64) -> RedisValueRef {
         RedisValueRef::RDBFile(Bytes::from(empty_file)),
     ])
 }
+
+pub async fn set_rdb_payload(_db: &Db, payload: Bytes) -> RedisValueRef {
+    // Todo - actually parse this
+    println!("Got request to set RDB payload with len {}", payload.len());
+    RSimpleString("OK")
+}

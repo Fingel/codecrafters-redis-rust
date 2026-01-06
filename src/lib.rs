@@ -118,6 +118,15 @@ impl RedisDb {
             self.dict.get_mut(key)
         }
     }
+
+    pub fn connected_replicas(&self) -> usize {
+        self.replicating_to
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|t| !t.is_closed())
+            .count()
+    }
 }
 
 pub type Db = Arc<RedisDb>;

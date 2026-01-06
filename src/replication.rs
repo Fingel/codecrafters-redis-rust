@@ -170,8 +170,8 @@ fn compute_redis_value_size(item: &RedisValueRef) -> usize {
     }
 }
 
-pub async fn wait(_db: &Db, _replicas: u64, _timeout: u64) -> RedisValueRef {
-    RInt(0)
+pub async fn wait(db: &Db, _replicas: u64, _timeout: u64) -> RedisValueRef {
+    RInt(db.connected_replicas() as i64)
 }
 
 #[cfg(test)]

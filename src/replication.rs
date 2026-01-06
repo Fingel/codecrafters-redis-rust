@@ -1,7 +1,7 @@
 use crate::{
     Db,
     interpreter::RedisCommand,
-    parser::{RSimpleString, RedisValueRef, RespParser},
+    parser::{RInt, RSimpleString, RedisValueRef, RespParser},
 };
 use base64::prelude::*;
 use bytes::Bytes;
@@ -168,6 +168,10 @@ fn compute_redis_value_size(item: &RedisValueRef) -> usize {
         RedisValueRef::MultiValue(values) => values.iter().map(compute_redis_value_size).sum(),
         RedisValueRef::ErrorMsg(_) => 0,
     }
+}
+
+pub async fn wait(_db: &Db, _replicas: u64, _timeout: u64) -> RedisValueRef {
+    RInt(0)
 }
 
 #[cfg(test)]

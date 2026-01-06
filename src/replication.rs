@@ -125,8 +125,6 @@ pub async fn set_rdb_payload(_db: &Db, payload: Bytes) -> RedisValueRef {
 }
 
 pub fn command_bytes(command: RedisCommand) -> usize {
-    // TODO: this is highly inefficient, we are writing to a buffer just to count how large it is.
-    // We should be able to compute length from the command itself.
     let r_ref: RedisValueRef = match command.try_into() {
         Ok(r) => r,
         Err(e) => {

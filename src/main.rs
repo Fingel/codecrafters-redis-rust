@@ -156,23 +156,33 @@ async fn main() {
                 eprintln!("Replication handshake failed: {}", e);
                 std::process::exit(1);
             }
+            let mut recieved_offset: u64 = 0;
             while let Some(redis_value) = transport.next().await {
                 match redis_value {
-                    Ok(value) => match value.try_into() {
-                        Ok(command) => {
-                            println!("Replica - Received command: {:?}", command);
-                            match command {
-                                RedisCommand::ReplConf(key, value) => {
-                                    let resp = replication::replconf_resp(key, value).await;
-                                    transport.send(resp).await.unwrap();
+                    Ok(value) => {
+                        let result: Result<RedisCommand, _> = value.try_into();
+                        match result {
+                            Ok(command) => {
+                                println!("Replica - Received command: {:?}", command);
+                                let cmd_for_bytes = command.clone();
+                                match command {
+                                    RedisCommand::ReplConf(key, _value) => {
+                                        let resp = replication::replconf_resp(
+                                            key,
+                                            recieved_offset.to_string(),
+                                        )
+                                        .await;
+                                        transport.send(resp).await.unwrap();
+                                    }
+                                    _ => {
+                                        handle_command(&db, command).await;
+                                    }
                                 }
-                                _ => {
-                                    handle_command(&db, command).await;
-                                }
+                                recieved_offset += replication::command_bytes(cmd_for_bytes);
                             }
+                            Err(e) => eprintln!("Failed to parse command: {}", e),
                         }
-                        Err(e) => eprintln!("Failed to parse command: {}", e),
-                    },
+                    }
                     Err(e) => eprintln!("Failed to read command: {:?}", e),
                 }
             }

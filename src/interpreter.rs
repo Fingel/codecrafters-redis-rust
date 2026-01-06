@@ -55,6 +55,8 @@ pub enum CmdError {
     InvalidIntegerArg { field: String },
     #[error("could not parse {field}")]
     ParseError { field: String },
+    #[error("conversion not implemented")]
+    ConversionError,
 }
 
 fn extract_string_arg(arg: &RedisValueRef, field_name: &str) -> Result<String, CmdError> {
@@ -128,7 +130,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     Err(CmdError::InvalidCommandType)
                 }
             }
-            _ => Err(CmdError::InvalidCommandType),
+            _ => Err(CmdError::ConversionError),
         }
     }
 }
@@ -157,7 +159,7 @@ impl TryFrom<RedisCommand> for RedisValueRef {
                 RString(offset.to_string()),
             ]),
             _ => {
-                return Err(CmdError::InvalidCommandType);
+                return Err(CmdError::ConversionError);
             }
         };
         Ok(value)

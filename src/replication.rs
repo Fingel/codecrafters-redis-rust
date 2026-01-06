@@ -1,10 +1,10 @@
 use crate::{
     Db,
     interpreter::RedisCommand,
-    parser::{RSimpleString, RedisValueRef, RespParser},
+    parser::{RSimpleString, RedisValueRef, RespParser, write_redis_value},
 };
 use base64::prelude::*;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_util::codec::Framed;
@@ -95,9 +95,10 @@ pub async fn handshake(
     Ok(())
 }
 
-pub async fn replconf_resp(key: String, _value: String) -> RedisValueRef {
+pub async fn replconf_resp(key: String, value: String) -> RedisValueRef {
     if key == "GETACK" {
-        RedisCommand::ReplConf("ACK".to_string(), "0".to_string())
+        // Value is bytes offset
+        RedisCommand::ReplConf("ACK".to_string(), value)
             .try_into()
             .unwrap()
     } else {
@@ -121,4 +122,19 @@ pub async fn set_rdb_payload(_db: &Db, payload: Bytes) -> RedisValueRef {
     // Todo - actually parse this
     println!("Got request to set RDB payload with len {}", payload.len());
     RSimpleString("OK")
+}
+
+pub fn command_bytes(command: RedisCommand) -> u64 {
+    // TODO: this is highly inefficient, we are writing to a buffer just to count how large it is.
+    // We should be able to compute length from the command itself.
+    let mut bytes = BytesMut::new();
+    let r_ref: RedisValueRef = match command.try_into() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error Converting to RedisValueRef, counting 0 bytes: {}", e);
+            return 0;
+        }
+    };
+    write_redis_value(r_ref, &mut bytes);
+    bytes.len() as u64
 }

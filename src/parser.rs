@@ -357,7 +357,7 @@ impl Encoder<RedisValueRef> for RespParser {
     }
 }
 
-fn write_redis_value(item: RedisValueRef, dst: &mut BytesMut) {
+pub fn write_redis_value(item: RedisValueRef, dst: &mut BytesMut) {
     match item {
         RedisValueRef::Error(e) => {
             dst.extend_from_slice(b"-");

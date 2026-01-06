@@ -156,7 +156,7 @@ async fn main() {
                 eprintln!("Replication handshake failed: {}", e);
                 std::process::exit(1);
             }
-            let mut recieved_offset: u64 = 0;
+            let mut recieved_offset: usize = 0;
             while let Some(redis_value) = transport.next().await {
                 match redis_value {
                     Ok(value) => {

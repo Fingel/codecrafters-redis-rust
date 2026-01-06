@@ -1,10 +1,10 @@
 use crate::{
     Db,
     interpreter::RedisCommand,
-    parser::{RSimpleString, RedisValueRef, RespParser, write_redis_value},
+    parser::{RSimpleString, RedisValueRef, RespParser},
 };
 use base64::prelude::*;
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_util::codec::Framed;
@@ -124,10 +124,9 @@ pub async fn set_rdb_payload(_db: &Db, payload: Bytes) -> RedisValueRef {
     RSimpleString("OK")
 }
 
-pub fn command_bytes(command: RedisCommand) -> u64 {
+pub fn command_bytes(command: RedisCommand) -> usize {
     // TODO: this is highly inefficient, we are writing to a buffer just to count how large it is.
     // We should be able to compute length from the command itself.
-    let mut bytes = BytesMut::new();
     let r_ref: RedisValueRef = match command.try_into() {
         Ok(r) => r,
         Err(e) => {
@@ -135,6 +134,66 @@ pub fn command_bytes(command: RedisCommand) -> u64 {
             return 0;
         }
     };
-    write_redis_value(r_ref, &mut bytes);
-    bytes.len() as u64
+    compute_redis_value_size(&r_ref)
+}
+
+fn compute_redis_value_size(item: &RedisValueRef) -> usize {
+    match item {
+        RedisValueRef::Error(e) => {
+            1 + e.len() + 2 // "-" + error + "\r\n"
+        }
+        RedisValueRef::String(s) => {
+            let len_str = s.len().to_string();
+            1 + len_str.len() + 2 + s.len() + 2 // "$" + len + "\r\n" + data + "\r\n"
+        }
+        RedisValueRef::SimpleString(s) => {
+            1 + s.len() + 2 // "+" + string + "\r\n"
+        }
+        RedisValueRef::Array(array) => {
+            let len_str = array.len().to_string();
+            let header_size = 1 + len_str.len() + 2; // "*" + len + "\r\n"
+            let elements_size: usize = array.iter().map(compute_redis_value_size).sum();
+            header_size + elements_size
+        }
+        RedisValueRef::Int(i) => {
+            let int_str = i.to_string();
+            1 + int_str.len() + 2 // ":" + number + "\r\n"
+        }
+        RedisValueRef::NullArray => crate::parser::NULL_ARRAY.len(),
+        RedisValueRef::NullBulkString => crate::parser::NULL_BULK_STRING.len(),
+        RedisValueRef::RDBFile(file) => {
+            let len_str = file.len().to_string();
+            1 + len_str.len() + 2 + file.len() // "$" + len + "\r\n" + data
+        }
+        RedisValueRef::MultiValue(values) => values.iter().map(compute_redis_value_size).sum(),
+        RedisValueRef::ErrorMsg(_) => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_redis_value_size() {
+        assert_eq!(
+            compute_redis_value_size(&RedisValueRef::String(Bytes::from("hello"))),
+            11
+        );
+        assert_eq!(
+            compute_redis_value_size(&RedisValueRef::SimpleString(Bytes::from("hello"))),
+            8
+        );
+        assert_eq!(compute_redis_value_size(&RedisValueRef::Int(42)), 5);
+        assert_eq!(
+            compute_redis_value_size(&RedisValueRef::Array(vec![
+                // 1 + 1 + 2
+                RedisValueRef::String(Bytes::from("hello")), // 11
+                RedisValueRef::Int(42)                       // 5
+            ])),
+            20
+        );
+        assert_eq!(compute_redis_value_size(&RedisValueRef::NullArray), 5);
+        assert_eq!(compute_redis_value_size(&RedisValueRef::NullBulkString), 5);
+    }
 }

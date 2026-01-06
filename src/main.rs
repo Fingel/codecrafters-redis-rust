@@ -161,7 +161,15 @@ async fn main() {
                     Ok(value) => match value.try_into() {
                         Ok(command) => {
                             println!("Replica - Received command: {:?}", command);
-                            handle_command(&db, command).await;
+                            match command {
+                                RedisCommand::ReplConf(key, value) => {
+                                    let resp = replication::replconf_resp(key, value).await;
+                                    transport.send(resp).await.unwrap();
+                                }
+                                _ => {
+                                    handle_command(&db, command).await;
+                                }
+                            }
                         }
                         Err(e) => eprintln!("Failed to parse command: {}", e),
                     },

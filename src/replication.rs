@@ -95,8 +95,14 @@ pub async fn handshake(
     Ok(())
 }
 
-pub async fn replconf_resp(_key: String, _value: String) -> RedisValueRef {
-    RSimpleString("OK")
+pub async fn replconf_resp(key: String, _value: String) -> RedisValueRef {
+    if key == "GETACK" {
+        RedisCommand::ReplConf("ACK".to_string(), "0".to_string())
+            .try_into()
+            .unwrap()
+    } else {
+        RSimpleString("OK")
+    }
 }
 
 pub async fn psync_resp(db: &Db, _id: String, _offset: i64) -> RedisValueRef {

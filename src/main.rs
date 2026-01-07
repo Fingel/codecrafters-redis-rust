@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use codecrafters_redis::parser::{RInt, RedisValueRef};
+use codecrafters_redis::parser::RInt;
 use codecrafters_redis::replication::psync_preamble;
 use codecrafters_redis::{Db, RedisDb, Replica, handle_command, replication};
 use codecrafters_redis::{
@@ -86,19 +86,8 @@ async fn process(stream: TcpStream, db: Db) {
                                 .load(std::sync::atomic::Ordering::Relaxed);
                             let command =
                                 RedisCommand::ReplConf("GETACK".to_string(), "*".to_string());
-                            {
-                                let replicas: Vec<_> = db
-                                    .replicating_to
-                                    .lock()
-                                    .unwrap()
-                                    .iter()
-                                    .map(|r| r.tx.clone())
-                                    .collect();
+                            replication::broadcast_to_replicas(&db, command).await;
 
-                                for tx in replicas {
-                                    tx.send(command.clone()).await.unwrap();
-                                }
-                            }
                             let mut timeout_limit = 0;
                             loop {
                                 let cnt = db
@@ -132,19 +121,7 @@ async fn process(stream: TcpStream, db: Db) {
                                 }
                                 let result = handle_command(&db, command.clone()).await;
                                 transport.send(result).await.unwrap();
-                                {
-                                    let replicas: Vec<_> = db
-                                        .replicating_to
-                                        .lock()
-                                        .unwrap()
-                                        .iter()
-                                        .map(|r| r.tx.clone())
-                                        .collect();
-
-                                    for tx in replicas {
-                                        tx.send(command.clone()).await.unwrap();
-                                    }
-                                }
+                                replication::broadcast_to_replicas(&db, command).await;
                             }
                         }
                     },

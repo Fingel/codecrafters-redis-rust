@@ -160,6 +160,20 @@ fn compute_redis_value_size(item: &RedisValueRef) -> usize {
     }
 }
 
+pub async fn broadcast_to_replicas(db: &Db, command: RedisCommand) {
+    let replicas: Vec<_> = db
+        .replicating_to
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|r| r.tx.clone())
+        .collect();
+
+    for tx in replicas {
+        let _ = tx.send(command.clone()).await;
+    }
+}
+
 pub async fn run_psync_loop(
     rx: &mut Receiver<RedisCommand>,
     transport: &mut Framed<TcpStream, RespParser>,

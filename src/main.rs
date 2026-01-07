@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use codecrafters_redis::parser::RedisValueRef;
-use codecrafters_redis::replication::psync_resp;
+use codecrafters_redis::parser::{RInt, RedisValueRef};
+use codecrafters_redis::replication::psync_preamble;
 use codecrafters_redis::{Db, RedisDb, handle_command, replication};
 use codecrafters_redis::{
     interpreter::RedisCommand,
@@ -58,9 +58,13 @@ async fn process(stream: TcpStream, db: Db) {
                                     .unwrap();
                             }
                         }
+                        RedisCommand::ReplConf(key, value) => {
+                            let command = RSimpleString("OK");
+                            transport.send(command).await.unwrap();
+                        }
                         RedisCommand::Psync(id_in, offset_in) => {
                             println!("Master - Got replication request");
-                            let response = psync_resp(&db, id_in, offset_in).await;
+                            let response = psync_preamble(&db, id_in, offset_in).await;
                             transport.send(response).await.unwrap();
                             let (tx, mut rx) = tokio::sync::mpsc::channel::<RedisCommand>(1024);
                             db.replicating_to.lock().unwrap().push(tx);
@@ -84,6 +88,12 @@ async fn process(stream: TcpStream, db: Db) {
                                     }
                                 }
                             }
+                        }
+                        RedisCommand::Wait(_replicas, _timeout) => {
+                            transport
+                                .send(RInt(db.connected_replicas() as i64))
+                                .await
+                                .unwrap();
                         }
                         _ => {
                             if in_transaction {
@@ -166,13 +176,20 @@ async fn main() {
                                 println!("Replica - Received command: {:?}", command);
                                 let cmd_for_bytes = command.clone();
                                 match command {
-                                    RedisCommand::ReplConf(key, _value) => {
-                                        let resp = replication::replconf_resp(
-                                            key,
-                                            recieved_offset.to_string(),
-                                        )
-                                        .await;
-                                        transport.send(resp).await.unwrap();
+                                    RedisCommand::ReplConf(key, value) => {
+                                        let command = if key == "GETACK" {
+                                            // Value is bytes offset
+                                            RedisCommand::ReplConf(
+                                                "ACK".to_string(),
+                                                recieved_offset.to_string(),
+                                            )
+                                            .try_into()
+                                            .unwrap()
+                                        } else {
+                                            RSimpleString("OK")
+                                        };
+
+                                        transport.send(command).await.unwrap();
                                     }
                                     _ => {
                                         handle_command(&db, command).await;

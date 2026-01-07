@@ -84,29 +84,18 @@ pub async fn handshake(
         .send(RedisCommand::Psync("?".to_string(), -1).try_into().unwrap())
         .await?;
 
-    let resp = get_next_response(transport).await?;
+    // let resp = get_next_response(transport).await?;
 
-    if !String::from_utf8_lossy(&resp.as_string().unwrap_or_default()).contains("FULLRESYNC") {
-        return Err(ReplicationError::HandshakeFailed(
-            "Didn't get a FULLRESYNC response for replconf capa".into(),
-        ));
-    }
+    // if !String::from_utf8_lossy(&resp.as_string().unwrap_or_default()).contains("FULLRESYNC") {
+    //     return Err(ReplicationError::HandshakeFailed(
+    //         "Didn't get a FULLRESYNC response for replconf capa".into(),
+    //     ));
+    // }
 
     Ok(())
 }
 
-pub async fn replconf_resp(key: String, value: String) -> RedisValueRef {
-    if key == "GETACK" {
-        // Value is bytes offset
-        RedisCommand::ReplConf("ACK".to_string(), value)
-            .try_into()
-            .unwrap()
-    } else {
-        RSimpleString("OK")
-    }
-}
-
-pub async fn psync_resp(db: &Db, _id: String, _offset: i64) -> RedisValueRef {
+pub async fn psync_preamble(db: &Db, _id: String, _offset: i64) -> RedisValueRef {
     // On handshake, id will be ? and offset will be -1
     let repl_id = db.replication_id.clone();
     let repl_offset = db.replication_offset;
@@ -166,10 +155,6 @@ fn compute_redis_value_size(item: &RedisValueRef) -> usize {
         RedisValueRef::MultiValue(values) => values.iter().map(compute_redis_value_size).sum(),
         RedisValueRef::ErrorMsg(_) => 0,
     }
-}
-
-pub async fn wait(db: &Db, _replicas: u64, _timeout: u64) -> RedisValueRef {
-    RInt(db.connected_replicas() as i64)
 }
 
 #[cfg(test)]

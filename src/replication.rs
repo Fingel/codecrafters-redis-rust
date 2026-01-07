@@ -1,7 +1,7 @@
 use crate::{
     Db,
     interpreter::RedisCommand,
-    parser::{RInt, RSimpleString, RedisValueRef, RespParser},
+    parser::{RSimpleString, RedisValueRef, RespParser},
 };
 use base64::prelude::*;
 use bytes::Bytes;

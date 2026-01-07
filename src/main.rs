@@ -67,41 +67,110 @@ async fn process(stream: TcpStream, db: Db) {
                             let response = psync_preamble(&db, id_in, offset_in).await;
                             transport.send(response).await.unwrap();
                             let (tx, mut rx) = tokio::sync::mpsc::channel::<RedisCommand>(1024);
+                            let replica_id = uuid::Uuid::new_v4().to_string();
                             let replica = Replica {
-                                id: uuid::Uuid::new_v4().to_string(),
+                                id: replica_id.clone(),
                                 offset: 0,
                                 tx,
                             };
                             {
                                 let mut replicas = db.replicating_to.lock().unwrap();
                                 replicas.push(replica);
-                            } // MutexGuard dropped here
+                            }
                             loop {
-                                if let Some(command) = rx.recv().await {
-                                    println!("Master - Replicating command: {:?}", command.clone());
-                                    if command.can_replicate() {
-                                        let r_value: RedisValueRef = match command.try_into() {
-                                            Ok(val) => val,
-                                            Err(_) => {
-                                                eprintln!("Command serialization not implemented");
-                                                continue;
+                                tokio::select! {
+                                    Some(command) = rx.recv() => {
+                                        println!("Master - Replicating command: {:?}", command.clone());
+                                        match command {
+                                            RedisCommand::ReplConf(key, value) if key == "GETACK" => {
+                                                // Send GETACK to replica
+                                                let r_value: RedisValueRef = RedisCommand::ReplConf(key, value)
+                                                    .try_into()
+                                                    .unwrap();
+                                                transport.send(r_value).await.unwrap();
                                             }
-                                        };
-                                        transport.send(r_value).await.unwrap();
-                                    } else {
-                                        println!(
-                                            "Master - Skipping non-replicable command: {:?}",
-                                            command
-                                        );
+                                            _ => {
+                                                if command.can_replicate() {
+                                                    let r_value: RedisValueRef = match command.try_into() {
+                                                        Ok(val) => val,
+                                                        Err(_) => {
+                                                            eprintln!("Command serialization not implemented");
+                                                            continue;
+                                                        }
+                                                    };
+                                                    transport.send(r_value).await.unwrap();
+                                                } else {
+                                                    println!("Master - Skipping non-replicable command: {:?}", command);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Some(result) = transport.next() => {
+                                        match result {
+                                            Ok(value) => {
+                                                let result: Result<RedisCommand, _> = value.try_into();
+                                                match result {
+                                                    Ok(RedisCommand::ReplConf(key, value)) if key == "ACK" => {
+                                                        println!("Master - Received ACK from replica: offset {}", value);
+                                                        // Handle the ACK here - update replica offset, etc.
+                                                        let mut replicas = db.replicating_to.lock().unwrap();
+                                                        for replica in replicas.iter_mut() {
+                                                            if replica.id == replica_id {
+                                                                println!("Master - setting replica with id {} to offset {}", replica.id, value);
+                                                                replica.offset = value.parse().unwrap();
+                                                            }
+                                                        }
+                                                    }
+                                                    Ok(cmd) => {
+                                                        println!("Master - Received unexpected command from replica: {:?}", cmd);
+                                                    }
+                                                    Err(e) => eprintln!("Failed to parse replica response: {}", e),
+                                                }
+                                            }
+                                            Err(e) => {
+                                                eprintln!("Error reading from replica: {:?}", e);
+                                                break;
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
-                        RedisCommand::Wait(_replicas, _timeout) => {
-                            transport
-                                .send(RInt(db.connected_replicas() as i64))
-                                .await
-                                .unwrap();
+                        RedisCommand::Wait(replicas, timeout) => {
+                            let last_wait_offset = db
+                                .replication_offset
+                                .load(std::sync::atomic::Ordering::Relaxed);
+                            let command =
+                                RedisCommand::ReplConf("GETACK".to_string(), "*".to_string());
+                            {
+                                let replicas: Vec<_> = db
+                                    .replicating_to
+                                    .lock()
+                                    .unwrap()
+                                    .iter()
+                                    .map(|r| r.tx.clone())
+                                    .collect();
+
+                                for tx in replicas {
+                                    tx.send(command.clone()).await.unwrap();
+                                }
+                            }
+                            let mut timeout_limit = 0;
+                            loop {
+                                let cnt = db
+                                    .replicating_to
+                                    .lock()
+                                    .unwrap()
+                                    .iter()
+                                    .filter(|r| !r.tx.is_closed() && r.offset >= last_wait_offset)
+                                    .count();
+                                if cnt as u64 >= replicas || timeout_limit >= timeout {
+                                    transport.send(RInt(cnt as i64)).await.unwrap();
+                                    break;
+                                }
+                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                timeout_limit += 100;
+                            }
                         }
                         _ => {
                             if in_transaction {
@@ -109,6 +178,14 @@ async fn process(stream: TcpStream, db: Db) {
                                 transport.send(RSimpleString("QUEUED")).await.unwrap();
                             } else {
                                 println!("Master - Received command: {:?}", command);
+                                if command.can_replicate() {
+                                    let command_bytes =
+                                        replication::command_bytes(command.clone()) as i64;
+                                    db.replication_offset.fetch_add(
+                                        command_bytes,
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    );
+                                }
                                 let result = handle_command(&db, command.clone()).await;
                                 transport.send(result).await.unwrap();
                                 {
@@ -193,7 +270,7 @@ async fn main() {
                                 println!("Replica - Received command: {:?}", command);
                                 let cmd_for_bytes = command.clone();
                                 match command {
-                                    RedisCommand::ReplConf(key, value) => {
+                                    RedisCommand::ReplConf(key, _value) => {
                                         let command = if key == "GETACK" {
                                             // Value is bytes offset
                                             RedisCommand::ReplConf(

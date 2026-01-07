@@ -58,7 +58,7 @@ async fn process(stream: TcpStream, db: Db) {
                                     .unwrap();
                             }
                         }
-                        RedisCommand::ReplConf(key, value) => {
+                        RedisCommand::ReplConf(_key, _value) => {
                             let command = RSimpleString("OK");
                             transport.send(command).await.unwrap();
                         }

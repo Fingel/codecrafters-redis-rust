@@ -98,7 +98,9 @@ pub async fn handshake(
 pub async fn psync_preamble(db: &Db, _id: String, _offset: i64) -> RedisValueRef {
     // On handshake, id will be ? and offset will be -1
     let repl_id = db.replication_id.clone();
-    let repl_offset = db.replication_offset;
+    let repl_offset = db
+        .replication_offset
+        .load(std::sync::atomic::Ordering::Relaxed);
     let empty_file_bytes = b"UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==";
     let empty_file = BASE64_STANDARD.decode(empty_file_bytes).unwrap();
     RedisValueRef::MultiValue(vec![

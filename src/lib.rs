@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::AtomicI64;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -58,7 +59,7 @@ pub struct RedisDb {
     pub replica_of: Option<(String, u16)>,
     pub replicating_to: Arc<Mutex<Vec<tokio::sync::mpsc::Sender<RedisCommand>>>>,
     pub replication_id: String,
-    pub replication_offset: u64,
+    pub replication_offset: Arc<AtomicI64>,
 }
 
 impl RedisDb {
@@ -71,7 +72,7 @@ impl RedisDb {
             replica_of,
             replicating_to: Arc::new(Mutex::new(Vec::new())),
             replication_id: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
-            replication_offset: 0,
+            replication_offset: Arc::new(AtomicI64::new(0)),
         }
     }
 
@@ -243,7 +244,10 @@ pub async fn info(db: &Db, _section: String) -> RedisValueRef {
         role:{}\n\
         master_replid:{}\n\
         master_repl_offset:{}\n",
-        role, db.replication_id, db.replication_offset
+        role,
+        db.replication_id,
+        db.replication_offset
+            .load(std::sync::atomic::Ordering::Relaxed)
     );
     RString(info)
 }

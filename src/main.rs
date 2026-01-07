@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use codecrafters_redis::parser::{RInt, RedisValueRef};
 use codecrafters_redis::replication::psync_preamble;
-use codecrafters_redis::{Db, RedisDb, handle_command, replication};
+use codecrafters_redis::{Db, RedisDb, Replica, handle_command, replication};
 use codecrafters_redis::{
     interpreter::RedisCommand,
     parser::{RArray, RError, RSimpleString, RespParser},
@@ -67,7 +67,15 @@ async fn process(stream: TcpStream, db: Db) {
                             let response = psync_preamble(&db, id_in, offset_in).await;
                             transport.send(response).await.unwrap();
                             let (tx, mut rx) = tokio::sync::mpsc::channel::<RedisCommand>(1024);
-                            db.replicating_to.lock().unwrap().push(tx);
+                            let replica = Replica {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                offset: 0,
+                                tx,
+                            };
+                            {
+                                let mut replicas = db.replicating_to.lock().unwrap();
+                                replicas.push(replica);
+                            } // MutexGuard dropped here
                             loop {
                                 if let Some(command) = rx.recv().await {
                                     println!("Master - Replicating command: {:?}", command.clone());
@@ -103,9 +111,18 @@ async fn process(stream: TcpStream, db: Db) {
                                 println!("Master - Received command: {:?}", command);
                                 let result = handle_command(&db, command.clone()).await;
                                 transport.send(result).await.unwrap();
-                                let replicate_to = { db.replicating_to.lock().unwrap().clone() };
-                                for tx in replicate_to {
-                                    tx.send(command.clone()).await.unwrap();
+                                {
+                                    let replicas: Vec<_> = db
+                                        .replicating_to
+                                        .lock()
+                                        .unwrap()
+                                        .iter()
+                                        .map(|r| r.tx.clone())
+                                        .collect();
+
+                                    for tx in replicas {
+                                        tx.send(command.clone()).await.unwrap();
+                                    }
                                 }
                             }
                         }

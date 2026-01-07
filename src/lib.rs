@@ -49,6 +49,13 @@ pub fn ref_error(msg: &str) -> RedisValueRef {
     RError(msg)
 }
 
+#[derive(Debug)]
+pub struct Replica {
+    pub id: String,
+    pub offset: i64,
+    pub tx: tokio::sync::mpsc::Sender<RedisCommand>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RedisDb {
     pub dict: DashMap<String, RedisValue>,
@@ -57,7 +64,7 @@ pub struct RedisDb {
     pub stream_waiters:
         Arc<Mutex<HashMap<String, VecDeque<tokio::sync::oneshot::Sender<RedisValueRef>>>>>,
     pub replica_of: Option<(String, u16)>,
-    pub replicating_to: Arc<Mutex<Vec<tokio::sync::mpsc::Sender<RedisCommand>>>>,
+    pub replicating_to: Arc<Mutex<Vec<Replica>>>,
     pub replication_id: String,
     pub replication_offset: Arc<AtomicI64>,
 }
@@ -125,7 +132,7 @@ impl RedisDb {
             .lock()
             .unwrap()
             .iter()
-            .filter(|t| !t.is_closed())
+            .filter(|t| !t.tx.is_closed())
             .count()
     }
 }

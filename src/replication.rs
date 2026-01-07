@@ -6,7 +6,7 @@ use crate::{
 use base64::prelude::*;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use tokio::net::TcpStream;
+use tokio::{net::TcpStream, sync::mpsc::Receiver};
 use tokio_util::codec::Decoder;
 use tokio_util::codec::Framed;
 
@@ -160,7 +160,71 @@ fn compute_redis_value_size(item: &RedisValueRef) -> usize {
     }
 }
 
-pub async fn handle_psync() {}
+pub async fn run_psync_loop(
+    rx: &mut Receiver<RedisCommand>,
+    transport: &mut Framed<TcpStream, RespParser>,
+    db: &Db,
+    replica_id: &str,
+) {
+    loop {
+        tokio::select! {
+            Some(command) = rx.recv() => {
+                println!("Master - Replicating command: {:?}", command.clone());
+                match command {
+                    RedisCommand::ReplConf(key, value) if key == "GETACK" => {
+                        // Send GETACK to replica
+                        let r_value: RedisValueRef = RedisCommand::ReplConf(key, value)
+                            .try_into()
+                            .unwrap();
+                        transport.send(r_value).await.unwrap();
+                    }
+                    _ => {
+                        if command.can_replicate() {
+                            let r_value: RedisValueRef = match command.try_into() {
+                                Ok(val) => val,
+                                Err(_) => {
+                                    eprintln!("Command serialization not implemented");
+                                    continue;
+                                }
+                            };
+                            transport.send(r_value).await.unwrap();
+                        } else {
+                            println!("Master - Skipping non-replicable command: {:?}", command);
+                        }
+                    }
+                }
+            }
+            Some(result) = transport.next() => {
+                match result {
+                    Ok(value) => {
+                        let result: Result<RedisCommand, _> = value.try_into();
+                        match result {
+                            Ok(RedisCommand::ReplConf(key, value)) if key == "ACK" => {
+                                println!("Master - Received ACK from replica: offset {}", value);
+                                // Handle the ACK here - update replica offset, etc.
+                                let mut replicas = db.replicating_to.lock().unwrap();
+                                for replica in replicas.iter_mut() {
+                                    if replica.id == replica_id {
+                                        println!("Master - setting replica with id {} to offset {}", replica.id, value);
+                                        replica.offset = value.parse().unwrap();
+                                    }
+                                }
+                            }
+                            Ok(cmd) => {
+                                println!("Master - Received unexpected command from replica: {:?}", cmd);
+                            }
+                            Err(e) => eprintln!("Failed to parse replica response: {}", e),
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading from replica: {:?}", e);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
 
 pub async fn run_replica_loop(db: &Db, master_addr: String, master_port: u16, port: u16) {
     let db = db.clone();

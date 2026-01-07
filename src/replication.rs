@@ -7,6 +7,7 @@ use base64::prelude::*;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
+use tokio_util::codec::Decoder;
 use tokio_util::codec::Framed;
 
 #[derive(Debug, thiserror::Error)]
@@ -157,6 +158,63 @@ fn compute_redis_value_size(item: &RedisValueRef) -> usize {
         RedisValueRef::MultiValue(values) => values.iter().map(compute_redis_value_size).sum(),
         RedisValueRef::ErrorMsg(_) => 0,
     }
+}
+
+pub async fn handle_psync() {}
+
+pub async fn run_replica_loop(db: &Db, master_addr: String, master_port: u16, port: u16) {
+    let db = db.clone();
+    tokio::spawn(async move {
+        let stream = match TcpStream::connect((master_addr, master_port)).await {
+            Ok(stream) => stream,
+            Err(_) => {
+                eprintln!("Failed to connect to master");
+                std::process::exit(1);
+            }
+        };
+        let mut transport = RespParser.framed(stream);
+        if let Err(e) = handshake(&mut transport, port).await {
+            eprintln!("Replication handshake failed: {}", e);
+            std::process::exit(1);
+        }
+        let mut recieved_offset: usize = 0;
+        while let Some(redis_value) = transport.next().await {
+            match redis_value {
+                Ok(value) => {
+                    let result: Result<RedisCommand, _> = value.try_into();
+                    match result {
+                        Ok(command) => {
+                            println!("Replica - Received command: {:?}", command);
+                            let cmd_for_bytes = command.clone();
+                            match command {
+                                RedisCommand::ReplConf(key, _value) => {
+                                    let command = if key == "GETACK" {
+                                        // Value is bytes offset
+                                        RedisCommand::ReplConf(
+                                            "ACK".to_string(),
+                                            recieved_offset.to_string(),
+                                        )
+                                        .try_into()
+                                        .unwrap()
+                                    } else {
+                                        RSimpleString("OK")
+                                    };
+
+                                    transport.send(command).await.unwrap();
+                                }
+                                _ => {
+                                    crate::handle_command(&db, command).await;
+                                }
+                            }
+                            recieved_offset += command_bytes(cmd_for_bytes);
+                        }
+                        Err(e) => eprintln!("Failed to parse command: {}", e),
+                    }
+                }
+                Err(e) => eprintln!("Failed to read command: {:?}", e),
+            }
+        }
+    });
 }
 
 #[cfg(test)]

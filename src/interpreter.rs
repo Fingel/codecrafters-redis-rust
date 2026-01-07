@@ -36,7 +36,16 @@ pub enum RedisCommand {
 
 impl RedisCommand {
     pub fn can_replicate(&self) -> bool {
-        matches!(self, RedisCommand::Set(_, _) | RedisCommand::SetEx(_, _, _))
+        matches!(
+            self,
+            RedisCommand::Set(_, _)
+                | RedisCommand::SetEx(_, _, _)
+                | RedisCommand::Rpush(_, _)
+                | RedisCommand::Lpush(_, _)
+                | RedisCommand::LPop(_, _)
+                | RedisCommand::XAdd(_, _, _)
+                | RedisCommand::Incr(_)
+        )
     }
 }
 

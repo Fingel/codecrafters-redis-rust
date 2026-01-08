@@ -67,10 +67,12 @@ pub struct RedisDb {
     pub replicating_to: Arc<Mutex<Vec<Replica>>>,
     pub replication_id: String,
     pub replication_offset: Arc<AtomicI64>,
+    pub cfg_dir: String,
+    pub db_file: String,
 }
 
 impl RedisDb {
-    pub fn new(replica_of: Option<(String, u16)>) -> Self {
+    pub fn new(replica_of: Option<(String, u16)>, cfg_dir: &str, db_file: &str) -> Self {
         RedisDb {
             dict: DashMap::new(),
             ttl: DashMap::new(),
@@ -80,6 +82,8 @@ impl RedisDb {
             replicating_to: Arc::new(Mutex::new(Vec::new())),
             replication_id: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
             replication_offset: Arc::new(AtomicI64::new(0)),
+            cfg_dir: cfg_dir.to_string(),
+            db_file: db_file.to_string(),
         }
     }
 
@@ -168,6 +172,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Psync(_id, _offset) => unreachable!(),
         RedisCommand::RdbPayload(payload) => replication::set_rdb_payload(db, payload).await,
         RedisCommand::Wait(_replicas, _timeout) => unreachable!(),
+        RedisCommand::Config(operation, key) => config(db, operation, key),
     }
 }
 
@@ -259,13 +264,24 @@ pub async fn info(db: &Db, _section: String) -> RedisValueRef {
     RString(info)
 }
 
+pub fn config(db: &Db, operation: String, value: String) -> RedisValueRef {
+    match operation.as_str() {
+        "GET" => match value.to_lowercase().as_str() {
+            "dir" => RArray(vec![RString("dir"), RString(db.cfg_dir.clone())]),
+            "dbfilename" => RArray(vec![RString("dbfilename"), RString(db.db_file.clone())]),
+            _ => RError("Unknown config key"),
+        },
+        _ => RError("Config operation must be GET"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
 
     fn setup() -> Arc<RedisDb> {
-        Arc::new(RedisDb::new(None))
+        Arc::new(RedisDb::new(None, "/tmp/redis-files", "dump.rdb"))
     }
 
     #[tokio::test]

@@ -325,7 +325,7 @@ mod tests {
     use super::*;
 
     fn setup() -> Arc<RedisDb> {
-        Arc::new(RedisDb::new(None))
+        Arc::new(RedisDb::new(None, "/tmp/redis-files", "dump.rdb"))
     }
 
     #[test]

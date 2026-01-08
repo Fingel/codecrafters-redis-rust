@@ -3,7 +3,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::{hint::black_box, sync::Arc};
 
 fn create_db_with_size(rt: &tokio::runtime::Runtime, size: usize) -> Db {
-    let db: Db = Arc::new(RedisDb::new(None));
+    let db = Arc::new(RedisDb::new(None, "/tmp/redis-files", "dump.rdb"));
     if size > 0 {
         let items: Vec<String> = (0..size).map(|i| format!("item{}", i)).collect();
         rt.block_on(lists::rpush(&db, "bench_key".to_string(), items));

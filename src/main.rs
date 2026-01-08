@@ -159,11 +159,21 @@ async fn main() {
     } else {
         None
     };
+    let cfg_dir = if let Some(cfg_dir_pos) = args.iter().position(|arg| arg == "--dir") {
+        &args[cfg_dir_pos + 1]
+    } else {
+        "/tmp/redis-files"
+    };
+    let db_file = if let Some(db_file_pos) = args.iter().position(|arg| arg == "--dbfilename") {
+        &args[db_file_pos + 1]
+    } else {
+        "dump.rdb"
+    };
     println!("Starting server on port {}", port);
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
         .await
         .unwrap();
-    let db = Arc::new(RedisDb::new(replica_of));
+    let db = Arc::new(RedisDb::new(replica_of, cfg_dir, db_file));
 
     // Replication
     if let Some((master_addr, master_port)) = db.replica_of.clone() {

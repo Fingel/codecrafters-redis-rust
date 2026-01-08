@@ -32,6 +32,7 @@ pub enum RedisCommand {
     Psync(String, i64),
     RdbPayload(Bytes),
     Wait(u64, u64),
+    Config(String, String),
 }
 
 impl RedisCommand {
@@ -131,6 +132,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "REPLCONF" => replconf(&args),
                     "PSYNC" => psync(&args),
                     "WAIT" => wait(&args),
+                    "CONFIG" => config(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -442,6 +444,16 @@ fn wait(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         let replicas: u64 = extract_parse_arg(&args[1], "replicas")?;
         let timeout: u64 = extract_parse_arg(&args[2], "timeout")?;
         Ok(RedisCommand::Wait(replicas, timeout))
+    }
+}
+
+fn config(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 3 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let operation = extract_string_arg(&args[1], "operation")?;
+        let key = extract_string_arg(&args[2], "key")?;
+        Ok(RedisCommand::Config(operation, key))
     }
 }
 

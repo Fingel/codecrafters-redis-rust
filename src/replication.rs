@@ -3,7 +3,6 @@ use crate::{
     interpreter::RedisCommand,
     parser::{RSimpleString, RedisValueRef, RespParser},
 };
-use base64::prelude::*;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::{net::TcpStream, sync::mpsc::Receiver};
@@ -85,14 +84,6 @@ pub async fn handshake(
         .send(RedisCommand::Psync("?".to_string(), -1).try_into().unwrap())
         .await?;
 
-    // let resp = get_next_response(transport).await?;
-
-    // if !String::from_utf8_lossy(&resp.as_string().unwrap_or_default()).contains("FULLRESYNC") {
-    //     return Err(ReplicationError::HandshakeFailed(
-    //         "Didn't get a FULLRESYNC response for replconf capa".into(),
-    //     ));
-    // }
-
     Ok(())
 }
 
@@ -102,8 +93,8 @@ pub async fn psync_preamble(db: &Db, _id: String, _offset: i64) -> RedisValueRef
     let repl_offset = db
         .replication_offset
         .load(std::sync::atomic::Ordering::Relaxed);
-    let empty_file_bytes = b"UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog==";
-    let empty_file = BASE64_STANDARD.decode(empty_file_bytes).unwrap();
+    let empty_file_hex = "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2";
+    let empty_file = hex::decode(empty_file_hex).unwrap();
     RedisValueRef::MultiValue(vec![
         RSimpleString(format!("FULLRESYNC {} {}", repl_id, repl_offset)),
         RedisValueRef::RDBFile(Bytes::from(empty_file)),

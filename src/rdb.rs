@@ -7,7 +7,7 @@ use nom::{Err, HexDisplay, IResult, Parser};
 #[derive(Debug)]
 struct Rdb {
     header: Header,
-    metadata: Vec<Metadata>,
+    metadata: Vec<KeyValue>,
 }
 
 #[derive(Debug)]
@@ -17,7 +17,7 @@ struct Header {
 }
 
 #[derive(Debug)]
-struct Metadata {
+struct KeyValue {
     key: String,
     value: String,
 }
@@ -135,11 +135,11 @@ fn metadata_start(i: &[u8]) -> IResult<&[u8], &[u8]> {
     tag(delim)(i)
 }
 
-fn metadata(i: &[u8]) -> IResult<&[u8], Metadata> {
+fn metadata(i: &[u8]) -> IResult<&[u8], KeyValue> {
     let (i, _) = metadata_start(i)?;
     let (i, key) = encoded_value(i)?;
     let (i, value) = encoded_value(i)?;
-    Ok((i, Metadata { key, value }))
+    Ok((i, KeyValue { key, value }))
 }
 
 fn database_start(i: &[u8]) -> IResult<&[u8], &[u8]> {
@@ -156,6 +156,28 @@ fn checksum(i: &[u8]) -> IResult<&[u8], &[u8]> {
     take(8usize)(i)
 }
 
+struct DatabaseHeader {
+    index: u32,
+    size: u32,
+    expire_size: u32,
+}
+
+fn database_header(i: &[u8]) -> IResult<&[u8], DatabaseHeader> {
+    let (i, index) = length(i)?;
+    let hash_table_delim: &[u8] = &[0xFB];
+    let (i, _) = tag(hash_table_delim)(i)?;
+    let (i, size) = length(i)?;
+    let (i, expire_size) = length(i)?;
+    Ok((
+        i,
+        DatabaseHeader {
+            index,
+            size,
+            expire_size,
+        },
+    ))
+}
+
 fn parse_rdb(i: &[u8]) -> IResult<&[u8], Rdb> {
     let (i, header) = header(i)?;
     let (i, (metadata, _)) = many_till(metadata, alt((database_start, eof_marker))).parse(i)?;
@@ -169,8 +191,37 @@ mod tests {
     6469732d62697473c040fa056374696d65c27f656169fa08757365642d6d\
     656dc280f41000fa08616f662d62617365c000ff4635ae29d917db65";
 
+    const FOOBAR_DB: &str = "524544495330303132fa0972656469732d76657205382e342e30fa0a7265\
+    6469732d62697473c040fa056374696d65c265c56269fa08757365642d6d\
+    656dc2a0bf1100fa08616f662d62617365c000fe00fb01000003666f6f03\
+    626172ff857a541ff5ce9d9c";
+
+    #[test]
+    fn test_foobar_db() {
+        let b = foobar_db_bytes();
+        assert_eq!(b.len(), 102);
+        let (_, rdb) = parse_rdb(&b).unwrap();
+        assert_eq!(rdb.header.magic, "REDIS");
+        assert_eq!(rdb.header.version, "0012");
+        assert_eq!(rdb.metadata.len(), 5);
+    }
+
+    #[test]
+    fn test_db_header() {
+        let db_header = "00FB0302";
+        let db_header_bytes = hex::decode(db_header).unwrap();
+        let (_, header) = database_header(&db_header_bytes).unwrap();
+        assert_eq!(header.index, 0);
+        assert_eq!(header.size, 3);
+        assert_eq!(header.expire_size, 2);
+    }
+
     fn empty_db_bytes() -> Vec<u8> {
         hex::decode(EMPTY_DB).unwrap()
+    }
+
+    fn foobar_db_bytes() -> Vec<u8> {
+        hex::decode(FOOBAR_DB).unwrap()
     }
 
     #[test]
@@ -256,7 +307,6 @@ mod tests {
         let (_, rdb) = result.unwrap();
         assert_eq!(rdb.header.magic, "REDIS");
         assert_eq!(rdb.header.version, "0012");
-        dbg!(&rdb.metadata);
         assert_eq!(rdb.metadata.len(), 5);
         let metadata = &rdb.metadata[0];
         assert_eq!(metadata.key, "redis-ver");

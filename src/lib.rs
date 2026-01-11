@@ -1,10 +1,15 @@
 use std::collections::{HashMap, VecDeque};
+use std::error::Error;
+use std::fs::{File, create_dir_all};
+use std::io::Read;
+use std::path::Path;
 use std::sync::atomic::AtomicI64;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::interpreter::RedisCommand;
 use crate::parser::{RArray, RError, RInt, RNull, RSimpleString, RString, RedisValueRef};
+use crate::rdb::parse_rdb;
 use crate::streams::StreamCollection;
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -86,6 +91,37 @@ impl RedisDb {
             cfg_dir: cfg_dir.to_string(),
             db_file: db_file.to_string(),
         }
+    }
+
+    pub fn try_load_rdb(&self) -> Result<usize, Box<dyn Error>> {
+        let path = Path::new(&self.cfg_dir);
+        if !path.exists() {
+            create_dir_all(path).unwrap();
+        }
+        let rdb_file = path.join(&self.db_file);
+        if rdb_file.exists() {
+            println!("Loading RDB file {}", rdb_file.display());
+            let mut file = File::open(rdb_file)?;
+            let mut buffer: Vec<u8> = Vec::new();
+            file.read_to_end(&mut buffer)?;
+            let parsed = match parse_rdb(&buffer) {
+                Ok((_, rdb)) => rdb,
+                Err(e) => return Err(format!("Failed to parse RDB: {:?}", e).into()),
+            };
+            let cnt = parsed.entries.len();
+            for entry in &parsed.entries {
+                self.dict.insert(
+                    entry.kv.key.clone(),
+                    RedisValue::String(Bytes::from(entry.kv.value.clone())),
+                );
+                if let Some(ttl) = entry.expire {
+                    self.ttl.insert(entry.kv.key.clone(), ttl);
+                }
+            }
+            return Ok(cnt);
+        }
+
+        Ok(0)
     }
 
     fn is_expired(&self, key: &str) -> bool {

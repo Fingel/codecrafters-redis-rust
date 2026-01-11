@@ -5,22 +5,36 @@ use nom::multi::{many_till, many0};
 use nom::{IResult, Parser};
 
 #[derive(Debug)]
-struct Rdb {
-    header: Header,
-    metadata: Vec<KeyValue>,
-    entries: Vec<DatabaseEntry>,
+pub struct Rdb {
+    pub header: Header,
+    pub metadata: Vec<KeyValue>,
+    pub entries: Vec<DatabaseEntry>,
 }
 
 #[derive(Debug)]
-struct Header {
-    magic: String,
-    version: String,
+pub struct Header {
+    pub magic: String,
+    pub version: String,
 }
 
 #[derive(Debug)]
-struct KeyValue {
-    key: String,
-    value: String,
+pub struct KeyValue {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug)]
+pub struct DatabaseEntry {
+    pub kv: KeyValue,
+    pub expire: Option<u64>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+struct DatabaseHeader {
+    index: u32,
+    size: u32,
+    expire_size: u32,
 }
 
 #[derive(Debug, PartialEq)]
@@ -157,13 +171,6 @@ fn checksum(i: &[u8]) -> IResult<&[u8], &[u8]> {
     take(8usize)(i)
 }
 
-#[derive(Debug)]
-struct DatabaseHeader {
-    index: u32,
-    size: u32,
-    expire_size: u32,
-}
-
 fn database_header(i: &[u8]) -> IResult<&[u8], DatabaseHeader> {
     let (i, index) = length(i)?;
     let hash_table_delim: &[u8] = &[0xFB];
@@ -178,12 +185,6 @@ fn database_header(i: &[u8]) -> IResult<&[u8], DatabaseHeader> {
             expire_size,
         },
     ))
-}
-
-#[derive(Debug)]
-struct DatabaseEntry {
-    kv: KeyValue,
-    expire: Option<u64>,
 }
 
 fn database_value(i: &[u8]) -> IResult<&[u8], KeyValue> {
@@ -235,7 +236,7 @@ fn entry_no_expire(i: &[u8]) -> IResult<&[u8], DatabaseEntry> {
     ))
 }
 
-fn parse_rdb(i: &[u8]) -> IResult<&[u8], Rdb> {
+pub fn parse_rdb(i: &[u8]) -> IResult<&[u8], Rdb> {
     let (i, header) = header(i)?;
     let (i, metadata) = many0(metadata).parse(i)?;
     let (i, db_header_opt) = opt(database_start).parse(i)?;

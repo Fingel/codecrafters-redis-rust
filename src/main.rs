@@ -174,6 +174,7 @@ async fn main() {
         .await
         .unwrap();
     let db = Arc::new(RedisDb::new(replica_of, cfg_dir, db_file));
+    db.try_load_rdb().unwrap();
 
     // Replication
     if let Some((master_addr, master_port)) = db.replica_of.clone() {

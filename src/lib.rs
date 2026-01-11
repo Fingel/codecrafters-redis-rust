@@ -326,7 +326,7 @@ pub fn keys(db: &Db, _pattern: String) -> RedisValueRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{ops::Deref, time::Duration};
+    use std::time::Duration;
 
     fn setup() -> Arc<RedisDb> {
         Arc::new(RedisDb::new(None, "/tmp/redis-files", "dump.rdb"))

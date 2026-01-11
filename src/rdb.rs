@@ -1,13 +1,14 @@
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take};
-use nom::combinator::peek;
+use nom::combinator::{opt, peek};
 use nom::multi::{many_till, many0};
-use nom::{Err, HexDisplay, IResult, Parser};
+use nom::{IResult, Parser};
 
 #[derive(Debug)]
 struct Rdb {
     header: Header,
     metadata: Vec<KeyValue>,
+    entries: Vec<DatabaseEntry>,
 }
 
 #[derive(Debug)]
@@ -156,6 +157,7 @@ fn checksum(i: &[u8]) -> IResult<&[u8], &[u8]> {
     take(8usize)(i)
 }
 
+#[derive(Debug)]
 struct DatabaseHeader {
     index: u32,
     size: u32,
@@ -178,10 +180,86 @@ fn database_header(i: &[u8]) -> IResult<&[u8], DatabaseHeader> {
     ))
 }
 
+#[derive(Debug)]
+struct DatabaseEntry {
+    kv: KeyValue,
+    expire: Option<u64>,
+}
+
+fn database_value(i: &[u8]) -> IResult<&[u8], KeyValue> {
+    let delim: &[u8] = &[0x00];
+    let (i, _) = tag(delim)(i)?;
+    let (i, key) = encoded_value(i)?;
+    let (i, value) = encoded_value(i)?;
+    Ok((i, KeyValue { key, value }))
+}
+
+fn entry_expire_ms(i: &[u8]) -> IResult<&[u8], DatabaseEntry> {
+    let delim: &[u8] = &[0xFC];
+    let (i, _) = tag(delim)(i)?;
+    let (i, expire) = take(8usize)(i)?;
+    let timestamp = u64::from_le_bytes(expire.try_into().unwrap());
+    let (i, database_value) = database_value(i)?;
+    Ok((
+        i,
+        DatabaseEntry {
+            kv: database_value,
+            expire: Some(timestamp),
+        },
+    ))
+}
+
+fn entry_expire_sec(i: &[u8]) -> IResult<&[u8], DatabaseEntry> {
+    let delim: &[u8] = &[0xFD];
+    let (i, _) = tag(delim)(i)?;
+    let (i, expire) = take(4usize)(i)?;
+    let timestamp = u32::from_le_bytes(expire.try_into().unwrap());
+    let (i, database_value) = database_value(i)?;
+    Ok((
+        i,
+        DatabaseEntry {
+            kv: database_value,
+            expire: Some(timestamp as u64),
+        },
+    ))
+}
+
+fn entry_no_expire(i: &[u8]) -> IResult<&[u8], DatabaseEntry> {
+    let (i, database_value) = database_value(i)?;
+    Ok((
+        i,
+        DatabaseEntry {
+            kv: database_value,
+            expire: None,
+        },
+    ))
+}
+
 fn parse_rdb(i: &[u8]) -> IResult<&[u8], Rdb> {
     let (i, header) = header(i)?;
-    let (i, (metadata, _)) = many_till(metadata, alt((database_start, eof_marker))).parse(i)?;
-    Ok((i, Rdb { header, metadata }))
+    let (i, metadata) = many0(metadata).parse(i)?;
+    let (i, db_header_opt) = opt(database_start).parse(i)?;
+    let (i, entries) = if db_header_opt.is_some() {
+        let (i, _db_header) = database_header(i)?;
+        let (i, (entries, _)) = many_till(
+            alt((entry_expire_ms, entry_expire_sec, entry_no_expire)),
+            eof_marker,
+        )
+        .parse(i)?;
+        (i, entries)
+    } else {
+        let (i, _) = eof_marker(i)?;
+        (i, Vec::new())
+    };
+    let (i, _) = checksum(i)?;
+    Ok((
+        i,
+        Rdb {
+            header,
+            metadata,
+            entries,
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -196,14 +274,92 @@ mod tests {
     656dc2a0bf1100fa08616f662d62617365c000fe00fb01000003666f6f03\
     626172ff857a541ff5ce9d9c";
 
+    const BAZ_TTL_DB: &str = "524544495330303132fa0972656469732d76657205382e342e30fa0a7265\
+    6469732d62697473c040fa056374696d65c29b326369fa08757365642d6d\
+    656dc2c8201200fa08616f662d62617365c000fe00fb02010003666f6f03\
+    626172fc89037fab9b010000000362617a046672617aff1ac69407fe5b14\
+    fc";
+
     #[test]
-    fn test_foobar_db() {
-        let b = foobar_db_bytes();
-        assert_eq!(b.len(), 102);
-        let (_, rdb) = parse_rdb(&b).unwrap();
+    fn test_baz_ttl_db() {
+        let b = db_bytes(BAZ_TTL_DB);
+        assert_eq!(b.len(), 121);
+        let result = parse_rdb(&b);
+        let (_, rdb) = result.unwrap();
         assert_eq!(rdb.header.magic, "REDIS");
         assert_eq!(rdb.header.version, "0012");
         assert_eq!(rdb.metadata.len(), 5);
+        assert_eq!(rdb.entries.len(), 2);
+        assert_eq!(rdb.entries[0].kv.key, "foo");
+        assert_eq!(rdb.entries[0].kv.value, "bar");
+        assert_eq!(rdb.entries[0].expire, None);
+        assert_eq!(rdb.entries[1].kv.key, "baz");
+        assert_eq!(rdb.entries[1].kv.value, "fraz");
+        assert_eq!(rdb.entries[1].expire, Some(1768108786569));
+    }
+
+    #[test]
+    fn test_foobar_db() {
+        let b = db_bytes(FOOBAR_DB);
+        assert_eq!(b.len(), 102);
+        let result = parse_rdb(&b);
+        let (_, rdb) = result.unwrap();
+        assert_eq!(rdb.header.magic, "REDIS");
+        assert_eq!(rdb.header.version, "0012");
+        assert_eq!(rdb.metadata.len(), 5);
+        assert_eq!(rdb.entries.len(), 1);
+        assert_eq!(rdb.entries[0].kv.key, "foo");
+        assert_eq!(rdb.entries[0].kv.value, "bar");
+        assert_eq!(rdb.entries[0].expire, None);
+    }
+
+    #[test]
+    fn test_empty_file() {
+        let b = db_bytes(EMPTY_DB);
+        assert_eq!(b.len(), 88);
+        let result = parse_rdb(&b);
+        let (_, rdb) = result.unwrap();
+        assert_eq!(rdb.header.magic, "REDIS");
+        assert_eq!(rdb.header.version, "0012");
+        assert_eq!(rdb.metadata.len(), 5);
+        let metadata = &rdb.metadata[0];
+        assert_eq!(metadata.key, "redis-ver");
+        assert_eq!(metadata.value, "8.4.0");
+
+        let metadata = &rdb.metadata[1];
+        assert_eq!(metadata.key, "redis-bits");
+        assert_eq!(metadata.value, "64");
+
+        let metadata = &rdb.metadata[2];
+        assert_eq!(metadata.key, "ctime");
+        assert_eq!(metadata.value, "1767990655");
+
+        let metadata = &rdb.metadata[3];
+        assert_eq!(metadata.key, "used-mem");
+        assert_eq!(metadata.value, "1111168");
+
+        let metadata = &rdb.metadata[4];
+        assert_eq!(metadata.key, "aof-base");
+        assert_eq!(metadata.value, "0");
+    }
+
+    #[test]
+    fn test_expire_entry_timestamp() {
+        let entry = "FC1572E7078F0100000003666F6F03626172";
+        let entry_bytes = hex::decode(entry).unwrap();
+        let (_, entry) = entry_expire_ms(&entry_bytes).unwrap();
+        assert_eq!(entry.expire, Some(1713824559637));
+        assert_eq!(entry.kv.key, "foo");
+        assert_eq!(entry.kv.value, "bar");
+    }
+
+    #[test]
+    fn test_database_value() {
+        let value = "0006666F6F6261720662617A717578";
+        let value_bytes = hex::decode(value).unwrap();
+        let (_, kv) = database_value(&value_bytes).unwrap();
+        assert_eq!(kv.key, "foobar");
+        assert_eq!(kv.value, "bazqux");
     }
 
     #[test]
@@ -216,24 +372,20 @@ mod tests {
         assert_eq!(header.expire_size, 2);
     }
 
-    fn empty_db_bytes() -> Vec<u8> {
-        hex::decode(EMPTY_DB).unwrap()
-    }
-
-    fn foobar_db_bytes() -> Vec<u8> {
-        hex::decode(FOOBAR_DB).unwrap()
+    fn db_bytes(db_name: &str) -> Vec<u8> {
+        hex::decode(db_name).unwrap()
     }
 
     #[test]
     fn test_magic() {
-        let db = empty_db_bytes();
+        let db = db_bytes(EMPTY_DB);
         let (_, magic) = magic(&db).unwrap();
         assert_eq!(magic, &b"REDIS"[..]);
     }
 
     #[test]
     fn test_version() {
-        let db = empty_db_bytes();
+        let db = db_bytes(EMPTY_DB);
         let (i, _) = magic(&db).unwrap();
         let (_, version) = version(i).unwrap();
         assert_eq!(version, &b"0012"[..]);
@@ -241,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_header() {
-        let db = empty_db_bytes();
+        let db = db_bytes(EMPTY_DB);
         let result = header(&db).unwrap();
         let (_, header) = result;
         assert_eq!(header.magic, "REDIS");
@@ -297,35 +449,5 @@ mod tests {
         let (_, metadata) = metadata(&md_bytes).unwrap();
         assert_eq!(metadata.key, "redis-ver");
         assert_eq!(metadata.value, "6.0.16");
-    }
-
-    #[test]
-    fn test_empty_file() {
-        let b = empty_db_bytes();
-        assert_eq!(b.len(), 88);
-        let result = parse_rdb(&b);
-        let (_, rdb) = result.unwrap();
-        assert_eq!(rdb.header.magic, "REDIS");
-        assert_eq!(rdb.header.version, "0012");
-        assert_eq!(rdb.metadata.len(), 5);
-        let metadata = &rdb.metadata[0];
-        assert_eq!(metadata.key, "redis-ver");
-        assert_eq!(metadata.value, "8.4.0");
-
-        let metadata = &rdb.metadata[1];
-        assert_eq!(metadata.key, "redis-bits");
-        assert_eq!(metadata.value, "64");
-
-        let metadata = &rdb.metadata[2];
-        assert_eq!(metadata.key, "ctime");
-        assert_eq!(metadata.value, "1767990655");
-
-        let metadata = &rdb.metadata[3];
-        assert_eq!(metadata.key, "used-mem");
-        assert_eq!(metadata.value, "1111168");
-
-        let metadata = &rdb.metadata[4];
-        assert_eq!(metadata.key, "aof-base");
-        assert_eq!(metadata.value, "0");
     }
 }

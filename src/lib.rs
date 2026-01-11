@@ -210,6 +210,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::RdbPayload(payload) => replication::set_rdb_payload(db, payload).await,
         RedisCommand::Wait(_replicas, _timeout) => unreachable!(),
         RedisCommand::Config(operation, key) => config(db, operation, key),
+        RedisCommand::Keys(pattern) => keys(db, pattern),
     }
 }
 
@@ -312,10 +313,20 @@ pub fn config(db: &Db, operation: String, value: String) -> RedisValueRef {
     }
 }
 
+pub fn keys(db: &Db, _pattern: String) -> RedisValueRef {
+    let db_keys = db
+        .dict
+        .iter()
+        .map(|entry| RString(entry.key().clone()))
+        .collect::<Vec<_>>();
+
+    RArray(db_keys)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use std::{ops::Deref, time::Duration};
 
     fn setup() -> Arc<RedisDb> {
         Arc::new(RedisDb::new(None, "/tmp/redis-files", "dump.rdb"))
@@ -393,6 +404,25 @@ mod tests {
 
         let result = incr(&db, key.clone()).await;
         assert!(matches!(result, RedisValueRef::Error(_)));
+    }
+
+    #[tokio::test]
+    async fn test_keys_command() {
+        let db = setup();
+        let test_keys: Vec<&str> = vec!["key1", "key2", "key3"];
+        for k in &test_keys {
+            let key = String::from(*k);
+            set(&db, key, "value".to_string()).await;
+        }
+        let result = keys(&db, "*".to_string());
+        match result {
+            RedisValueRef::Array(values) => {
+                for k in test_keys {
+                    assert!(values.contains(&RString(k.to_string())));
+                }
+            }
+            _ => panic!("Unexpected result"),
+        }
     }
 
     #[test]

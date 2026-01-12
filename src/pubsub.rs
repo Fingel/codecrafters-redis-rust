@@ -39,7 +39,7 @@ pub async fn subscription_loop(
                     Ok(RedisCommand::PUnsubscribe(pattern)) => {
                         punsubscribe(db, pattern, &mut subscriptions).await
                     }
-                    Ok(RedisCommand::Ping) => RArray(vec![RString("pong"), RString("")]),
+                    Ok(RedisCommand::Ping) => ping(),
                     Ok(other_command) => RError(format!(
                         "ERR Can't execute {} in subscribed mode",
                         other_command
@@ -104,4 +104,8 @@ pub async fn punsubscribe(
     _subscriptions: &mut Subscriptions,
 ) -> RedisValueRef {
     RString("OK")
+}
+
+pub fn ping() -> RedisValueRef {
+    RArray(vec![RString("pong"), RString("")])
 }

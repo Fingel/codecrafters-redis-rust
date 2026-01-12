@@ -34,6 +34,7 @@ pub enum RedisCommand {
     Wait(u64, u64),
     Config(String, String),
     Keys(String),
+    Subscribe(String),
 }
 
 impl RedisCommand {
@@ -135,6 +136,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "WAIT" => wait(&args),
                     "CONFIG" => config(&args),
                     "KEYS" => keys(&args),
+                    "SUBSCRIBE" => subscribe(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -465,6 +467,15 @@ fn keys(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
     } else {
         let pattern = extract_string_arg(&args[1], "pattern")?;
         Ok(RedisCommand::Keys(pattern))
+    }
+}
+
+fn subscribe(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 2 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let channel = extract_string_arg(&args[1], "channel")?;
+        Ok(RedisCommand::Subscribe(channel))
     }
 }
 

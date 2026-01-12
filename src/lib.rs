@@ -17,6 +17,7 @@ use dashmap::DashMap;
 pub mod interpreter;
 pub mod lists;
 pub mod parser;
+pub mod pubsub;
 pub mod rdb;
 pub mod replication;
 pub mod streams;
@@ -211,6 +212,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Wait(_replicas, _timeout) => unreachable!(),
         RedisCommand::Config(operation, key) => config(db, operation, key),
         RedisCommand::Keys(pattern) => keys(db, pattern),
+        RedisCommand::Subscribe(channel) => pubsub::subscribe(db, channel),
     }
 }
 

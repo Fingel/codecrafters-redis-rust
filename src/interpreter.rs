@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use bytes::Bytes;
 use thiserror::Error;
 
@@ -35,6 +37,9 @@ pub enum RedisCommand {
     Config(String, String),
     Keys(String),
     Subscribe(String),
+    Unsubscribe(String),
+    PSubscribe(String),
+    PUnsubscribe(String),
 }
 
 impl RedisCommand {
@@ -49,6 +54,49 @@ impl RedisCommand {
                 | RedisCommand::XAdd(_, _, _)
                 | RedisCommand::Incr(_)
         )
+    }
+}
+
+impl Display for RedisCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RedisCommand::Ping => write!(f, "'Ping'"),
+            RedisCommand::Echo(msg) => write!(f, "'ECHO' {}", msg),
+            RedisCommand::Set(key, value) => write!(f, "'SET' {} {}", key, value),
+            RedisCommand::SetEx(key, value, ttl) => write!(f, "'SETEX' {} {} {}", key, value, ttl),
+            RedisCommand::Get(key) => write!(f, "'GET' {}", key),
+            RedisCommand::Rpush(key, values) => write!(f, "'RPUSH' {} {:?}", key, values),
+            RedisCommand::Lpush(key, values) => write!(f, "'LPUSH' {} {:?}", key, values),
+            RedisCommand::Lrange(key, start, stop) => {
+                write!(f, "'LRANGE' {} {} {}", key, start, stop)
+            }
+            RedisCommand::LLen(key) => write!(f, "'LLEN' {}", key),
+            RedisCommand::LPop(key, count) => write!(f, "'LPOP' {} {:?}", key, count),
+            RedisCommand::BLPop(key, timeout) => write!(f, "'BLPOP' {} {:?}", key, timeout),
+            RedisCommand::Type(key) => write!(f, "'TYPE' {}", key),
+            RedisCommand::XAdd(key, id, fields) => {
+                write!(f, "'XADD' {} {:?} {:?}", key, id, fields)
+            }
+            RedisCommand::XRange(key, start, end) => {
+                write!(f, "'XRANGE' {} {:?} {:?}", key, start, end)
+            }
+            RedisCommand::XRead(streams, block) => write!(f, "'XREAD' {:?} {:?}", streams, block),
+            RedisCommand::Incr(key) => write!(f, "'INCR' {}", key),
+            RedisCommand::Multi => write!(f, "'Multi'"),
+            RedisCommand::Exec => write!(f, "'Exec'"),
+            RedisCommand::Discard => write!(f, "'Discard'"),
+            RedisCommand::Info(section) => write!(f, "'INFO' {}", section),
+            RedisCommand::ReplConf(key, value) => write!(f, "'REPLCONF' {} {}", key, value),
+            RedisCommand::Psync(repl_id, offset) => write!(f, "'PSYNC' {} {}", repl_id, offset),
+            RedisCommand::RdbPayload(bytes) => write!(f, "'RdbPayload' {:?}", bytes),
+            RedisCommand::Wait(replicas, timeout) => write!(f, "'WAIT' {} {}", replicas, timeout),
+            RedisCommand::Config(key, value) => write!(f, "'CONFIG' {} {}", key, value),
+            RedisCommand::Keys(pattern) => write!(f, "'KEYS' {}", pattern),
+            RedisCommand::Subscribe(channel) => write!(f, "'SUBSCRIBE' {}", channel),
+            RedisCommand::Unsubscribe(channel) => write!(f, "'UNSUBSCRIBE' {}", channel),
+            RedisCommand::PSubscribe(pattern) => write!(f, "'PSUBSCRIBE' {}", pattern),
+            RedisCommand::PUnsubscribe(pattern) => write!(f, "'PUNSUBSCRIBE' {}", pattern),
+        }
     }
 }
 
@@ -137,6 +185,9 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "CONFIG" => config(&args),
                     "KEYS" => keys(&args),
                     "SUBSCRIBE" => subscribe(&args),
+                    "UNSUBSCRIBE" => unsubscribe(&args),
+                    "PSUBSCRIBE" => psubscribe(&args),
+                    "PUNSUBSCRIBE" => punsubscribe(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -476,6 +527,33 @@ fn subscribe(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
     } else {
         let channel = extract_string_arg(&args[1], "channel")?;
         Ok(RedisCommand::Subscribe(channel))
+    }
+}
+
+fn unsubscribe(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 2 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let channel = extract_string_arg(&args[1], "channel")?;
+        Ok(RedisCommand::Unsubscribe(channel))
+    }
+}
+
+fn psubscribe(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 2 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let pattern = extract_string_arg(&args[1], "pattern")?;
+        Ok(RedisCommand::PSubscribe(pattern))
+    }
+}
+
+fn punsubscribe(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 2 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let pattern = extract_string_arg(&args[1], "pattern")?;
+        Ok(RedisCommand::PUnsubscribe(pattern))
     }
 }
 

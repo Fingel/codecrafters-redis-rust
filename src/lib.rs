@@ -215,6 +215,9 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Config(operation, key) => config(db, operation, key),
         RedisCommand::Keys(pattern) => keys(db, pattern),
         RedisCommand::Subscribe(_channel) => unreachable!(),
+        RedisCommand::Unsubscribe(_channel) => unreachable!(),
+        RedisCommand::PSubscribe(_pattern) => unreachable!(),
+        RedisCommand::PUnsubscribe(_pattern) => unreachable!(),
     }
 }
 

@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use codecrafters_redis::parser::{RInt, RString, RedisValueRef};
+use codecrafters_redis::parser::RInt;
 use codecrafters_redis::replication::psync_preamble;
-use codecrafters_redis::{Db, RedisDb, Replica, handle_command, replication};
+use codecrafters_redis::{Db, RedisDb, Replica, handle_command, pubsub, replication};
 use codecrafters_redis::{
     interpreter::RedisCommand,
     parser::{RArray, RError, RSimpleString, RespParser},
@@ -17,8 +16,6 @@ async fn process(stream: TcpStream, db: Db) {
         let mut transport = RespParser.framed(stream);
         let mut in_transaction = false;
         let mut queued_commands: Vec<RedisCommand> = Vec::new();
-        let mut subscriptions: HashMap<String, tokio::sync::broadcast::Receiver<RedisValueRef>> =
-            HashMap::new();
         while let Some(redis_value) = transport.next().await {
             match redis_value {
                 Ok(value) => match value.try_into() {
@@ -109,26 +106,7 @@ async fn process(stream: TcpStream, db: Db) {
                             }
                         }
                         RedisCommand::Subscribe(channel) => {
-                            let sub_cnt = {
-                                let mut pubsub = db.pubsub.lock().unwrap();
-                                if let Some(tx) = pubsub.get(&channel) {
-                                    subscriptions.insert(channel.clone(), tx.subscribe());
-                                } else {
-                                    let (tx, rx) =
-                                        tokio::sync::broadcast::channel::<RedisValueRef>(1024);
-                                    pubsub.insert(channel.clone(), tx);
-                                    subscriptions.insert(channel.clone(), rx);
-                                }
-                                subscriptions.len()
-                            };
-                            transport
-                                .send(RArray(vec![
-                                    RString("subscribe"),
-                                    RString(channel),
-                                    RInt(sub_cnt as i64),
-                                ]))
-                                .await
-                                .unwrap();
+                            pubsub::subscription_loop(&db, &mut transport, channel).await;
                         }
                         _ => {
                             if in_transaction {

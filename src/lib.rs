@@ -76,6 +76,7 @@ pub struct RedisDb {
     pub replication_offset: Arc<AtomicI64>,
     pub cfg_dir: String,
     pub db_file: String,
+    pub pubsub: Arc<Mutex<HashMap<String, tokio::sync::broadcast::Sender<RedisValueRef>>>>,
 }
 
 impl RedisDb {
@@ -91,6 +92,7 @@ impl RedisDb {
             replication_offset: Arc::new(AtomicI64::new(0)),
             cfg_dir: cfg_dir.to_string(),
             db_file: db_file.to_string(),
+            pubsub: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -212,7 +214,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Wait(_replicas, _timeout) => unreachable!(),
         RedisCommand::Config(operation, key) => config(db, operation, key),
         RedisCommand::Keys(pattern) => keys(db, pattern),
-        RedisCommand::Subscribe(channel) => pubsub::subscribe(db, channel),
+        RedisCommand::Subscribe(_channel) => unreachable!(),
     }
 }
 

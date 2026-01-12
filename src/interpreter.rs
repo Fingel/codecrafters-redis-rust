@@ -40,6 +40,7 @@ pub enum RedisCommand {
     Unsubscribe(String),
     PSubscribe(String),
     PUnsubscribe(String),
+    Publish(String, String),
 }
 
 impl RedisCommand {
@@ -96,6 +97,9 @@ impl Display for RedisCommand {
             RedisCommand::Unsubscribe(channel) => write!(f, "'UNSUBSCRIBE' {}", channel),
             RedisCommand::PSubscribe(pattern) => write!(f, "'PSUBSCRIBE' {}", pattern),
             RedisCommand::PUnsubscribe(pattern) => write!(f, "'PUNSUBSCRIBE' {}", pattern),
+            RedisCommand::Publish(channel, message) => {
+                write!(f, "'PUBLISH' {} {}", channel, message)
+            }
         }
     }
 }
@@ -188,6 +192,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "UNSUBSCRIBE" => unsubscribe(&args),
                     "PSUBSCRIBE" => psubscribe(&args),
                     "PUNSUBSCRIBE" => punsubscribe(&args),
+                    "PUBLISH" => publish(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -554,6 +559,16 @@ fn punsubscribe(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
     } else {
         let pattern = extract_string_arg(&args[1], "pattern")?;
         Ok(RedisCommand::PUnsubscribe(pattern))
+    }
+}
+
+fn publish(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 3 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let channel = extract_string_arg(&args[1], "channel")?;
+        let message = extract_string_arg(&args[2], "message")?;
+        Ok(RedisCommand::Publish(channel, message))
     }
 }
 

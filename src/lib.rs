@@ -218,6 +218,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Unsubscribe(_channel) => unreachable!(),
         RedisCommand::PSubscribe(_pattern) => unreachable!(),
         RedisCommand::PUnsubscribe(_pattern) => unreachable!(),
+        RedisCommand::Publish(channel, message) => pubsub::publish(db, channel, message).await,
     }
 }
 

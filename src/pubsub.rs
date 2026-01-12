@@ -109,3 +109,14 @@ pub async fn punsubscribe(
 pub fn ping() -> RedisValueRef {
     RArray(vec![RString("pong"), RString("")])
 }
+
+pub async fn publish(db: &Db, channel: String, _message: String) -> RedisValueRef {
+    let cnt = db
+        .pubsub
+        .lock()
+        .unwrap()
+        .get(&channel)
+        .unwrap()
+        .receiver_count();
+    RInt(cnt as i64)
+}

@@ -114,10 +114,17 @@ pub async fn subscribe(
 
 pub async fn unsubscribe(
     _db: &Db,
-    _channel: String,
-    _subscriptions: &mut Subscriptions,
+    channel: String,
+    subscriptions: &mut Subscriptions,
 ) -> RedisValueRef {
-    RString("OK")
+    if subscriptions.contains_key(&channel) {
+        subscriptions.remove(&channel);
+    }
+    RArray(vec![
+        RString("unsubscribe"),
+        RString(channel),
+        RInt(subscriptions.len() as i64),
+    ])
 }
 
 pub async fn psubscribe(

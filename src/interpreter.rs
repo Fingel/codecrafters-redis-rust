@@ -41,6 +41,7 @@ pub enum RedisCommand {
     PSubscribe(String),
     PUnsubscribe(String),
     Publish(String, String),
+    ZAdd(String, f64, String),
 }
 
 impl RedisCommand {
@@ -99,6 +100,9 @@ impl Display for RedisCommand {
             RedisCommand::PUnsubscribe(pattern) => write!(f, "'PUNSUBSCRIBE' {}", pattern),
             RedisCommand::Publish(channel, message) => {
                 write!(f, "'PUBLISH' {} {}", channel, message)
+            }
+            RedisCommand::ZAdd(key, score, member) => {
+                write!(f, "'ZADD' {} {} {}", key, score, member)
             }
         }
     }
@@ -193,6 +197,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "PSUBSCRIBE" => psubscribe(&args),
                     "PUNSUBSCRIBE" => punsubscribe(&args),
                     "PUBLISH" => publish(&args),
+                    "ZADD" => zadd(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -569,6 +574,17 @@ fn publish(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         let channel = extract_string_arg(&args[1], "channel")?;
         let message = extract_string_arg(&args[2], "message")?;
         Ok(RedisCommand::Publish(channel, message))
+    }
+}
+
+fn zadd(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 4 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let set = extract_string_arg(&args[1], "set")?;
+        let score: f64 = extract_parse_arg(&args[2], "score")?;
+        let member = extract_string_arg(&args[3], "member")?;
+        Ok(RedisCommand::ZAdd(set, score, member))
     }
 }
 

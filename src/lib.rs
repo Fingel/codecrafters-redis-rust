@@ -11,6 +11,7 @@ use crate::interpreter::RedisCommand;
 use crate::parser::{RArray, RError, RInt, RNull, RSimpleString, RString, RedisValueRef};
 use crate::rdb::parse_rdb;
 use crate::streams::StreamCollection;
+use crate::zset::ZSet;
 use bytes::Bytes;
 use dashmap::DashMap;
 
@@ -21,6 +22,7 @@ pub mod pubsub;
 pub mod rdb;
 pub mod replication;
 pub mod streams;
+pub mod zset;
 
 // Storage Type
 #[derive(Debug, Clone, PartialEq)]
@@ -77,6 +79,7 @@ pub struct RedisDb {
     pub cfg_dir: String,
     pub db_file: String,
     pub pubsub: Arc<Mutex<HashMap<String, tokio::sync::broadcast::Sender<RedisValueRef>>>>,
+    pub zsets: Arc<Mutex<HashMap<String, ZSet>>>,
 }
 
 impl RedisDb {
@@ -93,6 +96,7 @@ impl RedisDb {
             cfg_dir: cfg_dir.to_string(),
             db_file: db_file.to_string(),
             pubsub: Arc::new(Mutex::new(HashMap::new())),
+            zsets: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -219,6 +223,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::PSubscribe(_pattern) => unreachable!(),
         RedisCommand::PUnsubscribe(_pattern) => unreachable!(),
         RedisCommand::Publish(channel, message) => pubsub::publish(db, channel, message).await,
+        RedisCommand::ZAdd(set, score, member) => zset::zadd(db, set, score, member).await,
     }
 }
 

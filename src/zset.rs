@@ -58,6 +58,18 @@ impl ZSet {
             }
         }
     }
+
+    /// Remove a member from the zset, returning the number of elements removed
+    fn remove(&mut self, member: String) -> usize {
+        match self.map.remove(&member) {
+            Some(score) => {
+                let node = ListNode(score, member);
+                self.list.remove(&node);
+                1
+            }
+            None => 0,
+        }
+    }
 }
 
 pub fn zadd(db: &Db, set: String, score: f64, member: String) -> RedisValueRef {
@@ -70,6 +82,15 @@ pub fn zadd(db: &Db, set: String, score: f64, member: String) -> RedisValueRef {
             set_guard.insert(set, zset);
             cnt
         }
+    };
+    RInt(cnt as i64)
+}
+
+pub fn zrem(db: &Db, set: String, member: String) -> RedisValueRef {
+    let mut set_guard = db.zsets.lock().unwrap();
+    let cnt = match set_guard.get_mut(&set) {
+        Some(zset) => zset.remove(member),
+        None => 0,
     };
     RInt(cnt as i64)
 }
@@ -293,5 +314,20 @@ mod tests {
 
         let score = zscore(&db, "test_set".to_string(), "member3".to_string());
         assert_eq!(score, RNull());
+    }
+
+    #[test]
+    fn test_zrem() {
+        let db = setup();
+        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string());
+        let _ = zadd(&db, "test_set".to_string(), 2.0, "member2".to_string());
+
+        let _ = zrem(&db, "test_set".to_string(), "member1".to_string());
+        let card = zcard(&db, "test_set".to_string());
+        assert_eq!(card, RInt(1));
+
+        let _ = zrem(&db, "test_set".to_string(), "member2".to_string());
+        let card = zcard(&db, "test_set".to_string());
+        assert_eq!(card, RInt(0));
     }
 }

@@ -228,6 +228,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::ZRange(set, start, stop) => zset::zrange(db, set, start, stop),
         RedisCommand::ZCard(set) => zset::zcard(db, set),
         RedisCommand::ZScore(set, member) => zset::zscore(db, set, member),
+        RedisCommand::ZRem(set, member) => zset::zrem(db, set, member),
     }
 }
 

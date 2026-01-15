@@ -225,6 +225,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::Publish(channel, message) => pubsub::publish(db, channel, message).await,
         RedisCommand::ZAdd(set, score, member) => zset::zadd(db, set, score, member).await,
         RedisCommand::ZRank(set, member) => zset::zrank(db, set, member).await,
+        RedisCommand::ZRange(set, start, stop) => zset::zrange(db, set, start, stop).await,
     }
 }
 

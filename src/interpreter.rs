@@ -43,6 +43,7 @@ pub enum RedisCommand {
     Publish(String, String),
     ZAdd(String, f64, String),
     ZRank(String, String),
+    ZRange(String, usize, usize),
 }
 
 impl RedisCommand {
@@ -107,6 +108,9 @@ impl Display for RedisCommand {
             }
             RedisCommand::ZRank(key, member) => {
                 write!(f, "'ZRANK' {} {}", key, member)
+            }
+            RedisCommand::ZRange(key, start, stop) => {
+                write!(f, "'ZRANGE' {} {} {}", key, start, stop)
             }
         }
     }
@@ -203,6 +207,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "PUBLISH" => publish(&args),
                     "ZADD" => zadd(&args),
                     "ZRANK" => zrank(&args),
+                    "ZRANGE" => zrange(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -600,6 +605,17 @@ fn zrank(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         let set = extract_string_arg(&args[1], "set")?;
         let member = extract_string_arg(&args[2], "member")?;
         Ok(RedisCommand::ZRank(set, member))
+    }
+}
+
+fn zrange(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 4 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let set = extract_string_arg(&args[1], "set")?;
+        let start: usize = extract_parse_arg(&args[2], "start")?;
+        let stop: usize = extract_parse_arg(&args[3], "stop")?;
+        Ok(RedisCommand::ZRange(set, start, stop))
     }
 }
 

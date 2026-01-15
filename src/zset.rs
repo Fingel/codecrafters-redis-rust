@@ -5,7 +5,7 @@ use skiplist::OrderedSkipList;
 
 use crate::{
     Db,
-    parser::{RInt, RNull, RedisValueRef},
+    parser::{RArray, RInt, RNull, RString, RedisValueRef},
 };
 
 type Score = NotNan<f64>;
@@ -86,6 +86,22 @@ pub async fn zrank(db: &Db, set: String, member: String) -> RedisValueRef {
     }
 }
 
+pub async fn zrange(db: &Db, set: String, start: usize, stop: usize) -> RedisValueRef {
+    let set_guard = db.zsets.lock().unwrap();
+    match set_guard.get(&set) {
+        Some(zset) => {
+            let stop = stop.min(zset.list.len() - 1);
+            let range = zset
+                .list
+                .index_range(start..stop + 1)
+                .map(|node| RString(node.1.clone()))
+                .collect();
+            RArray(range)
+        }
+        None => RArray(Vec::new()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -136,5 +152,63 @@ mod tests {
         assert_eq!(rank, RInt(1));
         let rank = zrank(&db, "test_set".to_string(), "member3".to_string()).await;
         assert_eq!(rank, RInt(2));
+    }
+
+    #[tokio::test]
+    async fn test_zrange() {
+        let db = setup();
+        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string()).await;
+        let _ = zadd(&db, "test_set".to_string(), 2.0, "member2".to_string()).await;
+        let _ = zadd(&db, "test_set".to_string(), 3.0, "member3".to_string()).await;
+        let _ = zadd(&db, "test_set".to_string(), 4.0, "member4".to_string()).await;
+
+        let range = zrange(&db, "test_set".to_string(), 0, 2).await;
+        assert_eq!(
+            range,
+            RArray(vec![
+                RString("member1"),
+                RString("member2"),
+                RString("member3")
+            ])
+        );
+
+        let range = zrange(&db, "test_set".to_string(), 0, 20).await;
+        assert_eq!(
+            range,
+            RArray(vec![
+                RString("member1"),
+                RString("member2"),
+                RString("member3"),
+                RString("member4")
+            ])
+        );
+
+        let range = zrange(&db, "test_set".to_string(), 0, 3).await;
+        assert_eq!(
+            range,
+            RArray(vec![
+                RString("member1"),
+                RString("member2"),
+                RString("member3"),
+                RString("member4")
+            ])
+        );
+
+        let range = zrange(&db, "test_set".to_string(), 0, 4).await;
+        assert_eq!(
+            range,
+            RArray(vec![
+                RString("member1"),
+                RString("member2"),
+                RString("member3"),
+                RString("member4")
+            ])
+        );
+
+        let range = zrange(&db, "test_set".to_string(), 4, 0).await;
+        assert_eq!(range, RArray(vec![]));
+
+        let range = zrange(&db, "test_set".to_string(), 40, 50).await;
+        assert_eq!(range, RArray(vec![]));
     }
 }

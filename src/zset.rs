@@ -86,11 +86,23 @@ pub async fn zrank(db: &Db, set: String, member: String) -> RedisValueRef {
     }
 }
 
-pub async fn zrange(db: &Db, set: String, start: usize, stop: usize) -> RedisValueRef {
+fn normalize_index(index: i64, len: usize) -> usize {
+    if index < 0 {
+        (len as i64 + index).max(0) as usize
+    } else {
+        index as usize
+    }
+}
+
+pub async fn zrange(db: &Db, set: String, start: i64, stop: i64) -> RedisValueRef {
     let set_guard = db.zsets.lock().unwrap();
     match set_guard.get(&set) {
         Some(zset) => {
-            let stop = stop.min(zset.list.len() - 1);
+            let len = zset.list.len();
+            let start = normalize_index(start, len);
+            let stop = normalize_index(stop, len);
+            let start = start.max(0);
+            let stop = stop.min(len - 1);
             let range = zset
                 .list
                 .index_range(start..stop + 1)
@@ -210,5 +222,31 @@ mod tests {
 
         let range = zrange(&db, "test_set".to_string(), 40, 50).await;
         assert_eq!(range, RArray(vec![]));
+    }
+
+    #[tokio::test]
+    async fn test_zrange_negative() {
+        let db = setup();
+        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string()).await;
+        let _ = zadd(&db, "test_set".to_string(), 2.0, "member2".to_string()).await;
+        let _ = zadd(&db, "test_set".to_string(), 3.0, "member3".to_string()).await;
+        let _ = zadd(&db, "test_set".to_string(), 4.0, "member4".to_string()).await;
+
+        let range = zrange(&db, "test_set".to_string(), 2, -1).await;
+        assert_eq!(range, RArray(vec![RString("member3"), RString("member4")]));
+
+        let range = zrange(&db, "test_set".to_string(), -1, -1).await;
+        assert_eq!(range, RArray(vec![RString("member4")]));
+
+        let range = zrange(&db, "test_set".to_string(), -20, -1).await;
+        assert_eq!(
+            range,
+            RArray(vec![
+                RString("member1"),
+                RString("member2"),
+                RString("member3"),
+                RString("member4")
+            ])
+        );
     }
 }

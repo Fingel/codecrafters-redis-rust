@@ -43,7 +43,7 @@ pub enum RedisCommand {
     Publish(String, String),
     ZAdd(String, f64, String),
     ZRank(String, String),
-    ZRange(String, usize, usize),
+    ZRange(String, i64, i64),
 }
 
 impl RedisCommand {
@@ -613,8 +613,8 @@ fn zrange(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         Err(CmdError::InvalidArgumentNum)
     } else {
         let set = extract_string_arg(&args[1], "set")?;
-        let start: usize = extract_parse_arg(&args[2], "start")?;
-        let stop: usize = extract_parse_arg(&args[3], "stop")?;
+        let start: i64 = extract_parse_arg(&args[2], "start")?;
+        let stop: i64 = extract_parse_arg(&args[3], "stop")?;
         Ok(RedisCommand::ZRange(set, start, stop))
     }
 }

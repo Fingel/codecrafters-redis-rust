@@ -5,7 +5,7 @@ use skiplist::OrderedSkipList;
 
 use crate::{
     Db,
-    parser::{RInt, RedisValueRef},
+    parser::{RInt, RNull, RedisValueRef},
 };
 
 type Score = NotNan<f64>;
@@ -15,7 +15,10 @@ struct ListNode(Score, String);
 
 impl PartialOrd for ListNode {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0.partial_cmp(&other.0)
+        match self.0.partial_cmp(&other.0) {
+            Some(std::cmp::Ordering::Equal) => self.1.partial_cmp(&other.1),
+            other => other,
+        }
     }
 }
 
@@ -71,6 +74,18 @@ pub async fn zadd(db: &Db, set: String, score: f64, member: String) -> RedisValu
     RInt(cnt as i64)
 }
 
+pub async fn zrank(db: &Db, set: String, member: String) -> RedisValueRef {
+    let set_guard = db.zsets.lock().unwrap();
+    if let Some(zset) = set_guard.get(&set)
+        && let Some(score) = zset.map.get(&member)
+        && let Some(rank) = zset.list.index_of(&ListNode(*score, member))
+    {
+        RInt(rank as i64)
+    } else {
+        RNull()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -105,5 +120,21 @@ mod tests {
         assert_eq!(node.0, 2.0);
         assert_eq!(node.1, "member1");
         // Same
+    }
+
+    #[tokio::test]
+    async fn test_zrank() {
+        let db = setup();
+        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string()).await;
+        let _ = zadd(&db, "test_set".to_string(), 2.0, "member3".to_string()).await;
+        // out of lexigraphical order
+        let _ = zadd(&db, "test_set".to_string(), 2.0, "member2".to_string()).await;
+
+        let rank = zrank(&db, "test_set".to_string(), "member1".to_string()).await;
+        assert_eq!(rank, RInt(0));
+        let rank = zrank(&db, "test_set".to_string(), "member2".to_string()).await;
+        assert_eq!(rank, RInt(1));
+        let rank = zrank(&db, "test_set".to_string(), "member3".to_string()).await;
+        assert_eq!(rank, RInt(2));
     }
 }

@@ -42,6 +42,7 @@ pub enum RedisCommand {
     PUnsubscribe(String),
     Publish(String, String),
     ZAdd(String, f64, String),
+    ZRank(String, String),
 }
 
 impl RedisCommand {
@@ -103,6 +104,9 @@ impl Display for RedisCommand {
             }
             RedisCommand::ZAdd(key, score, member) => {
                 write!(f, "'ZADD' {} {} {}", key, score, member)
+            }
+            RedisCommand::ZRank(key, member) => {
+                write!(f, "'ZRANK' {} {}", key, member)
             }
         }
     }
@@ -198,6 +202,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "PUNSUBSCRIBE" => punsubscribe(&args),
                     "PUBLISH" => publish(&args),
                     "ZADD" => zadd(&args),
+                    "ZRANK" => zrank(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -585,6 +590,16 @@ fn zadd(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         let score: f64 = extract_parse_arg(&args[2], "score")?;
         let member = extract_string_arg(&args[3], "member")?;
         Ok(RedisCommand::ZAdd(set, score, member))
+    }
+}
+
+fn zrank(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 3 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let set = extract_string_arg(&args[1], "set")?;
+        let member = extract_string_arg(&args[2], "member")?;
+        Ok(RedisCommand::ZRank(set, member))
     }
 }
 

@@ -122,6 +122,17 @@ pub fn zcard(db: &Db, set: String) -> RedisValueRef {
     }
 }
 
+pub fn zscore(db: &Db, set: String, member: String) -> RedisValueRef {
+    let set_guard = db.zsets.lock().unwrap();
+    if let Some(zset) = set_guard.get(&set)
+        && let Some(entry) = zset.map.get(&member)
+    {
+        RString(entry.to_string())
+    } else {
+        RNull()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -266,5 +277,21 @@ mod tests {
 
         let card = zcard(&db, "test_set".to_string());
         assert_eq!(card, RInt(2));
+    }
+
+    #[test]
+    fn test_zscore() {
+        let db = setup();
+        let score = zscore(&db, "test_set".to_string(), "member1".to_string());
+        assert_eq!(score, RNull());
+
+        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string());
+        let _ = zadd(&db, "test_set".to_string(), 2.0, "member2".to_string());
+
+        let score = zscore(&db, "test_set".to_string(), "member1".to_string());
+        assert_eq!(score, RString("1"));
+
+        let score = zscore(&db, "test_set".to_string(), "member3".to_string());
+        assert_eq!(score, RNull());
     }
 }

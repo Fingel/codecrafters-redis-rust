@@ -45,6 +45,7 @@ pub enum RedisCommand {
     ZRank(String, String),
     ZRange(String, i64, i64),
     ZCard(String),
+    ZScore(String, String),
 }
 
 impl RedisCommand {
@@ -107,15 +108,13 @@ impl Display for RedisCommand {
             RedisCommand::ZAdd(key, score, member) => {
                 write!(f, "'ZADD' {} {} {}", key, score, member)
             }
-            RedisCommand::ZRank(key, member) => {
-                write!(f, "'ZRANK' {} {}", key, member)
-            }
+            RedisCommand::ZRank(key, member) => write!(f, "'ZRANK' {} {}", key, member),
             RedisCommand::ZRange(key, start, stop) => {
                 write!(f, "'ZRANGE' {} {} {}", key, start, stop)
             }
-            RedisCommand::ZCard(key) => {
-                write!(f, "'ZCARD' {}", key)
-            }
+
+            RedisCommand::ZCard(key) => write!(f, "'ZCARD' {}", key),
+            RedisCommand::ZScore(key, member) => write!(f, "'ZSCORE' {} {}", key, member),
         }
     }
 }
@@ -213,6 +212,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "ZRANK" => zrank(&args),
                     "ZRANGE" => zrange(&args),
                     "ZCARD" => zcard(&args),
+                    "ZSCORE" => zscore(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -630,6 +630,16 @@ fn zcard(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
     } else {
         let set = extract_string_arg(&args[1], "set")?;
         Ok(RedisCommand::ZCard(set))
+    }
+}
+
+fn zscore(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 3 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let set = extract_string_arg(&args[1], "set")?;
+        let member = extract_string_arg(&args[2], "member")?;
+        Ok(RedisCommand::ZScore(set, member))
     }
 }
 

@@ -15,6 +15,7 @@ use crate::zset::ZSet;
 use bytes::Bytes;
 use dashmap::DashMap;
 
+pub mod geo;
 pub mod interpreter;
 pub mod lists;
 pub mod parser;
@@ -229,6 +230,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::ZCard(set) => zset::zcard(db, set),
         RedisCommand::ZScore(set, member) => zset::zscore(db, set, member),
         RedisCommand::ZRem(set, member) => zset::zrem(db, set, member),
+        RedisCommand::GeoAdd(set, lng, lat, member) => geo::geoadd(db, set, lng, lat, member),
     }
 }
 

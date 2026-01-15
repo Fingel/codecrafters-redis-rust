@@ -47,6 +47,7 @@ pub enum RedisCommand {
     ZCard(String),
     ZScore(String, String),
     ZRem(String, String),
+    GeoAdd(String, f64, f64, String),
 }
 
 impl RedisCommand {
@@ -117,6 +118,9 @@ impl Display for RedisCommand {
             RedisCommand::ZCard(key) => write!(f, "'ZCARD' {}", key),
             RedisCommand::ZScore(key, member) => write!(f, "'ZSCORE' {} {}", key, member),
             RedisCommand::ZRem(key, member) => write!(f, "'ZREM' {} {}", key, member),
+            RedisCommand::GeoAdd(key, lng, lat, member) => {
+                write!(f, "'GEOADD' {} {} {} {}", key, lng, lat, member)
+            }
         }
     }
 }
@@ -216,6 +220,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "ZCARD" => zcard(&args),
                     "ZSCORE" => zscore(&args),
                     "ZREM" => zrem(&args),
+                    "GEOADD" => geoadd(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -653,6 +658,18 @@ fn zrem(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         let set = extract_string_arg(&args[1], "set")?;
         let member = extract_string_arg(&args[2], "member")?;
         Ok(RedisCommand::ZRem(set, member))
+    }
+}
+
+fn geoadd(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 5 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let key = extract_string_arg(&args[1], "key")?;
+        let lng: f64 = extract_parse_arg(&args[2], "longitude")?;
+        let lat: f64 = extract_parse_arg(&args[3], "latitude")?;
+        let member = extract_string_arg(&args[4], "member")?;
+        Ok(RedisCommand::GeoAdd(key, lng, lat, member))
     }
 }
 

@@ -60,7 +60,7 @@ impl ZSet {
     }
 }
 
-pub async fn zadd(db: &Db, set: String, score: f64, member: String) -> RedisValueRef {
+pub fn zadd(db: &Db, set: String, score: f64, member: String) -> RedisValueRef {
     let mut set_guard = db.zsets.lock().unwrap();
     let cnt = match set_guard.get_mut(&set) {
         Some(zset) => zset.add(member, score),
@@ -74,7 +74,7 @@ pub async fn zadd(db: &Db, set: String, score: f64, member: String) -> RedisValu
     RInt(cnt as i64)
 }
 
-pub async fn zrank(db: &Db, set: String, member: String) -> RedisValueRef {
+pub fn zrank(db: &Db, set: String, member: String) -> RedisValueRef {
     let set_guard = db.zsets.lock().unwrap();
     if let Some(zset) = set_guard.get(&set)
         && let Some(score) = zset.map.get(&member)
@@ -94,7 +94,7 @@ fn normalize_index(index: i64, len: usize) -> usize {
     }
 }
 
-pub async fn zrange(db: &Db, set: String, start: i64, stop: i64) -> RedisValueRef {
+pub fn zrange(db: &Db, set: String, start: i64, stop: i64) -> RedisValueRef {
     let set_guard = db.zsets.lock().unwrap();
     match set_guard.get(&set) {
         Some(zset) => {
@@ -114,6 +114,14 @@ pub async fn zrange(db: &Db, set: String, start: i64, stop: i64) -> RedisValueRe
     }
 }
 
+pub fn zcard(db: &Db, set: String) -> RedisValueRef {
+    let set_guard = db.zsets.lock().unwrap();
+    match set_guard.get(&set) {
+        Some(zset) => RInt(zset.list.len() as i64),
+        None => RInt(0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -126,55 +134,55 @@ mod tests {
         Arc::new(RedisDb::new(None, "/tmp/redis-files", "dump.rdb"))
     }
 
-    #[tokio::test]
-    async fn test_zadd() {
+    #[test]
+    fn test_zadd() {
         let db = setup();
-        let cnt = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string()).await;
+        let cnt = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string());
         assert_eq!(cnt, RInt(1));
         // Same
-        let cnt = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string()).await;
+        let cnt = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string());
         assert_eq!(cnt, RInt(0));
     }
 
-    #[tokio::test]
-    async fn test_zadd_update() {
+    #[test]
+    fn test_zadd_update() {
         let db = setup();
-        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string()).await;
+        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string());
         let node = db.zsets.lock().unwrap().get("test_set").unwrap().list[0].clone();
         assert_eq!(node.0, 1.0);
         assert_eq!(node.1, "member1");
-        let _ = zadd(&db, "test_set".to_string(), 2.0, "member1".to_string()).await;
+        let _ = zadd(&db, "test_set".to_string(), 2.0, "member1".to_string());
         let node = db.zsets.lock().unwrap().get("test_set").unwrap().list[0].clone();
         assert_eq!(node.0, 2.0);
         assert_eq!(node.1, "member1");
         // Same
     }
 
-    #[tokio::test]
-    async fn test_zrank() {
+    #[test]
+    fn test_zrank() {
         let db = setup();
-        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string()).await;
-        let _ = zadd(&db, "test_set".to_string(), 2.0, "member3".to_string()).await;
+        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string());
+        let _ = zadd(&db, "test_set".to_string(), 2.0, "member3".to_string());
         // out of lexigraphical order
-        let _ = zadd(&db, "test_set".to_string(), 2.0, "member2".to_string()).await;
+        let _ = zadd(&db, "test_set".to_string(), 2.0, "member2".to_string());
 
-        let rank = zrank(&db, "test_set".to_string(), "member1".to_string()).await;
+        let rank = zrank(&db, "test_set".to_string(), "member1".to_string());
         assert_eq!(rank, RInt(0));
-        let rank = zrank(&db, "test_set".to_string(), "member2".to_string()).await;
+        let rank = zrank(&db, "test_set".to_string(), "member2".to_string());
         assert_eq!(rank, RInt(1));
-        let rank = zrank(&db, "test_set".to_string(), "member3".to_string()).await;
+        let rank = zrank(&db, "test_set".to_string(), "member3".to_string());
         assert_eq!(rank, RInt(2));
     }
 
-    #[tokio::test]
-    async fn test_zrange() {
+    #[test]
+    fn test_zrange() {
         let db = setup();
-        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string()).await;
-        let _ = zadd(&db, "test_set".to_string(), 2.0, "member2".to_string()).await;
-        let _ = zadd(&db, "test_set".to_string(), 3.0, "member3".to_string()).await;
-        let _ = zadd(&db, "test_set".to_string(), 4.0, "member4".to_string()).await;
+        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string());
+        let _ = zadd(&db, "test_set".to_string(), 2.0, "member2".to_string());
+        let _ = zadd(&db, "test_set".to_string(), 3.0, "member3".to_string());
+        let _ = zadd(&db, "test_set".to_string(), 4.0, "member4".to_string());
 
-        let range = zrange(&db, "test_set".to_string(), 0, 2).await;
+        let range = zrange(&db, "test_set".to_string(), 0, 2);
         assert_eq!(
             range,
             RArray(vec![
@@ -184,7 +192,7 @@ mod tests {
             ])
         );
 
-        let range = zrange(&db, "test_set".to_string(), 0, 20).await;
+        let range = zrange(&db, "test_set".to_string(), 0, 20);
         assert_eq!(
             range,
             RArray(vec![
@@ -195,7 +203,7 @@ mod tests {
             ])
         );
 
-        let range = zrange(&db, "test_set".to_string(), 0, 3).await;
+        let range = zrange(&db, "test_set".to_string(), 0, 3);
         assert_eq!(
             range,
             RArray(vec![
@@ -206,7 +214,7 @@ mod tests {
             ])
         );
 
-        let range = zrange(&db, "test_set".to_string(), 0, 4).await;
+        let range = zrange(&db, "test_set".to_string(), 0, 4);
         assert_eq!(
             range,
             RArray(vec![
@@ -217,28 +225,28 @@ mod tests {
             ])
         );
 
-        let range = zrange(&db, "test_set".to_string(), 4, 0).await;
+        let range = zrange(&db, "test_set".to_string(), 4, 0);
         assert_eq!(range, RArray(vec![]));
 
-        let range = zrange(&db, "test_set".to_string(), 40, 50).await;
+        let range = zrange(&db, "test_set".to_string(), 40, 50);
         assert_eq!(range, RArray(vec![]));
     }
 
-    #[tokio::test]
-    async fn test_zrange_negative() {
+    #[test]
+    fn test_zrange_negative() {
         let db = setup();
-        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string()).await;
-        let _ = zadd(&db, "test_set".to_string(), 2.0, "member2".to_string()).await;
-        let _ = zadd(&db, "test_set".to_string(), 3.0, "member3".to_string()).await;
-        let _ = zadd(&db, "test_set".to_string(), 4.0, "member4".to_string()).await;
+        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string());
+        let _ = zadd(&db, "test_set".to_string(), 2.0, "member2".to_string());
+        let _ = zadd(&db, "test_set".to_string(), 3.0, "member3".to_string());
+        let _ = zadd(&db, "test_set".to_string(), 4.0, "member4".to_string());
 
-        let range = zrange(&db, "test_set".to_string(), 2, -1).await;
+        let range = zrange(&db, "test_set".to_string(), 2, -1);
         assert_eq!(range, RArray(vec![RString("member3"), RString("member4")]));
 
-        let range = zrange(&db, "test_set".to_string(), -1, -1).await;
+        let range = zrange(&db, "test_set".to_string(), -1, -1);
         assert_eq!(range, RArray(vec![RString("member4")]));
 
-        let range = zrange(&db, "test_set".to_string(), -20, -1).await;
+        let range = zrange(&db, "test_set".to_string(), -20, -1);
         assert_eq!(
             range,
             RArray(vec![
@@ -248,5 +256,15 @@ mod tests {
                 RString("member4")
             ])
         );
+    }
+
+    #[test]
+    fn test_zcard() {
+        let db = setup();
+        let _ = zadd(&db, "test_set".to_string(), 1.0, "member1".to_string());
+        let _ = zadd(&db, "test_set".to_string(), 2.0, "member2".to_string());
+
+        let card = zcard(&db, "test_set".to_string());
+        assert_eq!(card, RInt(2));
     }
 }

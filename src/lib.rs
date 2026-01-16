@@ -232,6 +232,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::ZRem(set, member) => zset::zrem(db, set, member),
         RedisCommand::GeoAdd(set, lng, lat, member) => geo::geoadd(db, set, lng, lat, member),
         RedisCommand::GeoPos(set, members) => geo::geopos(db, set, members),
+        RedisCommand::GeoDist(set, member1, member2) => geo::geodist(db, set, member1, member2),
     }
 }
 

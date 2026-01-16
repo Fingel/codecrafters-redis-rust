@@ -49,6 +49,7 @@ pub enum RedisCommand {
     ZRem(String, String),
     GeoAdd(String, f64, f64, String),
     GeoPos(String, Vec<String>),
+    GeoDist(String, String, String),
 }
 
 impl RedisCommand {
@@ -124,6 +125,9 @@ impl Display for RedisCommand {
             }
             RedisCommand::GeoPos(key, members) => {
                 write!(f, "'GEOPOS' {} {}", key, members.join(" "))
+            }
+            RedisCommand::GeoDist(key, member1, member2) => {
+                write!(f, "'GEODIST' {} {} {}", key, member1, member2)
             }
         }
     }
@@ -226,6 +230,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "ZREM" => zrem(&args),
                     "GEOADD" => geoadd(&args),
                     "GEOPOS" => geopos(&args),
+                    "GEODIST" => geodist(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -690,6 +695,17 @@ fn geopos(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
             .collect();
         let members = members?;
         Ok(RedisCommand::GeoPos(key, members))
+    }
+}
+
+fn geodist(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 4 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let key = extract_string_arg(&args[1], "key")?;
+        let member1 = extract_string_arg(&args[2], "member1")?;
+        let member2 = extract_string_arg(&args[3], "member2")?;
+        Ok(RedisCommand::GeoDist(key, member1, member2))
     }
 }
 

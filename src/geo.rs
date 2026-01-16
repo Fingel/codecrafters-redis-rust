@@ -98,6 +98,17 @@ pub fn geoadd(db: &Db, set: String, lng: f64, lat: f64, member: String) -> Redis
     zadd(db, set, score, member)
 }
 
+fn haversine_distance(origin: (f64, f64), dest: (f64, f64)) -> f64 {
+    const R: f64 = 6372797.560856;
+    let lat1 = origin.0.to_radians();
+    let lat2 = dest.0.to_radians();
+    let d_lat = lat2 - lat1;
+    let d_lon = (dest.1 - origin.1).to_radians();
+    let a = (d_lat / 2.0).sin().powi(2) + (d_lon / 2.0).sin().powi(2) * lat1.cos() * lat2.cos();
+    let c = 2.0 * a.sqrt().asin();
+    R * c
+}
+
 pub fn geopos(db: &Db, set: String, members: Vec<String>) -> RedisValueRef {
     let results: Vec<RedisValueRef> = members
         .iter()
@@ -114,6 +125,21 @@ pub fn geopos(db: &Db, set: String, members: Vec<String>) -> RedisValueRef {
         .collect();
 
     RArray(results)
+}
+
+pub fn geodist(db: &Db, set: String, member1: String, member2: String) -> RedisValueRef {
+    let score1 = zscore(db, set.clone(), member1.clone());
+    let score2 = zscore(db, set.clone(), member2.clone());
+
+    match (score1.expect_int(), score2.expect_int()) {
+        (Ok(score1), Ok(score2)) => {
+            let (lat1, lng1) = decode_geocode(score1 as f64);
+            let (lat2, lng2) = decode_geocode(score2 as f64);
+            let distance = haversine_distance((lat1, lng1), (lat2, lng2));
+            RString(format!("{:.4}", distance))
+        }
+        _ => RNullArray(),
+    }
 }
 
 #[cfg(test)]

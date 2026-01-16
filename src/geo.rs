@@ -1,6 +1,7 @@
 use crate::{
     Db,
-    parser::{RError, RInt, RedisValueRef},
+    parser::{RError, RedisValueRef},
+    zset::zadd,
 };
 
 fn validate_lat_lng(lng: f64, lat: f64) -> Result<(), String> {
@@ -13,9 +14,10 @@ fn validate_lat_lng(lng: f64, lat: f64) -> Result<(), String> {
     }
 }
 
-pub fn geoadd(_db: &Db, _set: String, lng: f64, lat: f64, _member: String) -> RedisValueRef {
+pub fn geoadd(db: &Db, set: String, lng: f64, lat: f64, member: String) -> RedisValueRef {
     if let Err(err) = validate_lat_lng(lng, lat) {
         return RError(format!("ERR {}", err));
     }
-    RInt(1)
+    let score = 0.0;
+    zadd(db, set, score, member)
 }

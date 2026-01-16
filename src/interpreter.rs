@@ -53,6 +53,7 @@ pub enum RedisCommand {
     GeoSearch(String, f64, f64, f64, String), // key, lng, lat, radius, unit
     AclWhoami(),
     AclGetUser(String),
+    AclSetUser(String, String),
 }
 
 impl RedisCommand {
@@ -137,6 +138,7 @@ impl Display for RedisCommand {
             }
             RedisCommand::AclWhoami() => write!(f, "'ACL' WHOAMI"),
             RedisCommand::AclGetUser(user) => write!(f, "'ACL' GETUSER {}", user),
+            RedisCommand::AclSetUser(user, _) => write!(f, "'ACL' SETUSER {} ***", user),
         }
     }
 }
@@ -735,11 +737,21 @@ fn geosearch(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
 }
 
 fn acl(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
-    match args.len() {
-        2 => Ok(RedisCommand::AclWhoami()),
-        3 => {
+    let command = extract_string_arg(&args[1], "command")?;
+    match command.as_str() {
+        "WHOAMI" => Ok(RedisCommand::AclWhoami()),
+        "GETUSER" => {
             let user = extract_string_arg(&args[2], "user")?;
             Ok(RedisCommand::AclGetUser(user))
+        }
+        "SETUSER" => {
+            let user = extract_string_arg(&args[2], "user")?;
+            let gt_password = extract_string_arg(&args[3], "password")?;
+            if !gt_password.starts_with(">") {
+                Err(CmdError::InvalidArgument("password".to_string()))
+            } else {
+                Ok(RedisCommand::AclSetUser(user, gt_password[1..].to_string()))
+            }
         }
         _ => Err(CmdError::InvalidArgumentNum),
     }

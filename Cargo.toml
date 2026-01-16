@@ -13,6 +13,7 @@ hex = "0.4.3"
 memchr = "2.7.6"
 nom = "8.0.0"
 ordered-float = "5.1.0"
+sha2 = "0.10.9"
 skiplist = "0.6.0"
 thiserror = "1.0.32"                                # error handling
 tokio = { version = "1.23.0", features = ["full"] } # async networking

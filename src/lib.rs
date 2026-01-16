@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicI64;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::auth::User;
 use crate::interpreter::RedisCommand;
 use crate::parser::{RArray, RError, RInt, RNull, RSimpleString, RString, RedisValueRef};
 use crate::rdb::parse_rdb;
@@ -82,6 +83,7 @@ pub struct RedisDb {
     pub db_file: String,
     pub pubsub: Arc<Mutex<HashMap<String, tokio::sync::broadcast::Sender<RedisValueRef>>>>,
     pub zsets: Arc<Mutex<HashMap<String, ZSet>>>,
+    pub users: Arc<Mutex<HashMap<String, User>>>,
 }
 
 impl RedisDb {
@@ -99,6 +101,7 @@ impl RedisDb {
             db_file: db_file.to_string(),
             pubsub: Arc::new(Mutex::new(HashMap::new())),
             zsets: Arc::new(Mutex::new(HashMap::new())),
+            users: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -239,6 +242,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         }
         RedisCommand::AclWhoami() => auth::aclwhoami(db),
         RedisCommand::AclGetUser(user) => auth::aclgetuser(db, user),
+        RedisCommand::AclSetUser(user, password) => auth::aclsetuser(db, user, password),
     }
 }
 

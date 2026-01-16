@@ -13,11 +13,16 @@ const MAX_LONGITUDE: f64 = 180.0;
 const LATITUDE_RANGE: f64 = MAX_LATITUDE - MIN_LATITUDE;
 const LONGITUDE_RANGE: f64 = MAX_LONGITUDE - MIN_LONGITUDE;
 
-fn validate_lat_lng(lng: f64, lat: f64) -> Result<(), String> {
-    if !(MIN_LONGITUDE..=MAX_LONGITUDE).contains(&lng) {
-        Err(format!("Longitude value ({}) is invalid", lng))
-    } else if !(MIN_LATITUDE..=MAX_LATITUDE).contains(&lat) {
-        Err(format!("Latitude value ({}) is invalid", lat))
+struct Point {
+    lat: f64,
+    lng: f64,
+}
+
+fn validate_point(point: &Point) -> Result<(), String> {
+    if !(MIN_LONGITUDE..=MAX_LONGITUDE).contains(&point.lng) {
+        Err(format!("Longitude value ({}) is invalid", point.lng))
+    } else if !(MIN_LATITUDE..=MAX_LATITUDE).contains(&point.lat) {
+        Err(format!("Latitude value ({}) is invalid", point.lat))
     } else {
         Ok(())
     }
@@ -52,7 +57,7 @@ fn interleave(x: i32, y: i32) -> i64 {
 fn convert_grid_numbers_to_coordinates(
     grid_latitude_number: i32,
     grid_longitude_number: i32,
-) -> (f64, f64) {
+) -> Point {
     let grid_latitude_min =
         MIN_LATITUDE + LATITUDE_RANGE * (grid_latitude_number as f64 / (2.0f64.powi(26)));
     let grid_latitude_max =
@@ -63,16 +68,16 @@ fn convert_grid_numbers_to_coordinates(
         MIN_LONGITUDE + LONGITUDE_RANGE * ((grid_longitude_number + 1) as f64 / (2.0f64.powi(26)));
 
     //Calculate the center point of the grid cell
-    let latitude = (grid_latitude_min + grid_latitude_max) / 2.0;
-    let longitude = (grid_longitude_min + grid_longitude_max) / 2.0;
+    let lat = (grid_latitude_min + grid_latitude_max) / 2.0;
+    let lng = (grid_longitude_min + grid_longitude_max) / 2.0;
 
-    (latitude, longitude)
+    Point { lat, lng }
 }
 
-fn encode_lng_lat(lng: f64, lat: f64) -> f64 {
+fn encode_point(point: Point) -> f64 {
     // Step one: Normalize
-    let normalized_lat = 2.0f64.powi(26) * (lat - MIN_LATITUDE) / LATITUDE_RANGE;
-    let normalized_lng = 2.0f64.powi(26) * (lng - MIN_LONGITUDE) / LONGITUDE_RANGE;
+    let normalized_lat = 2.0f64.powi(26) * (point.lat - MIN_LATITUDE) / LATITUDE_RANGE;
+    let normalized_lng = 2.0f64.powi(26) * (point.lng - MIN_LONGITUDE) / LONGITUDE_RANGE;
 
     // Step two: Truncate
     let normalized_lat = normalized_lat.trunc() as i32;
@@ -81,7 +86,7 @@ fn encode_lng_lat(lng: f64, lat: f64) -> f64 {
     interleave(normalized_lat, normalized_lng) as f64
 }
 
-fn decode_geocode(geo_code: f64) -> (f64, f64) {
+fn decode_geocode(geo_code: f64) -> Point {
     let y = geo_code.trunc() as i64 >> 1;
     let x = geo_code.trunc() as i64;
     let grid_latitude_number = compact_i64_to_i32(x);
@@ -91,19 +96,20 @@ fn decode_geocode(geo_code: f64) -> (f64, f64) {
 }
 
 pub fn geoadd(db: &Db, set: String, lng: f64, lat: f64, member: String) -> RedisValueRef {
-    if let Err(err) = validate_lat_lng(lng, lat) {
+    let point = Point { lat, lng };
+    if let Err(err) = validate_point(&point) {
         return RError(format!("ERR {}", err));
     }
-    let score = encode_lng_lat(lng, lat);
+    let score = encode_point(point);
     zadd(db, set, score, member)
 }
 
-fn haversine_distance(origin: (f64, f64), dest: (f64, f64)) -> f64 {
+fn haversine_distance(origin: Point, dest: Point) -> f64 {
     const R: f64 = 6372797.560856;
-    let lat1 = origin.0.to_radians();
-    let lat2 = dest.0.to_radians();
+    let lat1 = origin.lat.to_radians();
+    let lat2 = dest.lat.to_radians();
     let d_lat = lat2 - lat1;
-    let d_lon = (dest.1 - origin.1).to_radians();
+    let d_lon = (dest.lng - origin.lng).to_radians();
     let a = (d_lat / 2.0).sin().powi(2) + (d_lon / 2.0).sin().powi(2) * lat1.cos() * lat2.cos();
     let c = 2.0 * a.sqrt().asin();
     R * c
@@ -116,8 +122,11 @@ pub fn geopos(db: &Db, set: String, members: Vec<String>) -> RedisValueRef {
             let score = zscore(db, set.clone(), member.clone());
             match score.expect_int() {
                 Ok(score) => {
-                    let (lat, lng) = decode_geocode(score as f64);
-                    RArray(vec![RString(lng.to_string()), RString(lat.to_string())])
+                    let point = decode_geocode(score as f64);
+                    RArray(vec![
+                        RString(point.lng.to_string()),
+                        RString(point.lat.to_string()),
+                    ])
                 }
                 _ => RNullArray(),
             }
@@ -133,9 +142,9 @@ pub fn geodist(db: &Db, set: String, member1: String, member2: String) -> RedisV
 
     match (score1.expect_int(), score2.expect_int()) {
         (Ok(score1), Ok(score2)) => {
-            let (lat1, lng1) = decode_geocode(score1 as f64);
-            let (lat2, lng2) = decode_geocode(score2 as f64);
-            let distance = haversine_distance((lat1, lng1), (lat2, lng2));
+            let point1 = decode_geocode(score1 as f64);
+            let point2 = decode_geocode(score2 as f64);
+            let distance = haversine_distance(point1, point2);
             RString(format!("{:.4}", distance))
         }
         _ => RNullArray(),
@@ -147,21 +156,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_encode_lng_lat_bangkok() {
-        let encoded = encode_lng_lat(100.5252, 13.7220);
+    fn test_encode_point_bangkok() {
+        let encoded = encode_point(Point {
+            lng: 100.5252,
+            lat: 13.7220,
+        });
         assert_eq!(encoded, 3962257306574459.0);
     }
 
     #[test]
-    fn test_encode_lng_lat_sydney() {
-        let encoded = encode_lng_lat(151.2093, -33.8688);
+    fn test_encode_point_sydney() {
+        let encoded = encode_point(Point {
+            lng: 151.2093,
+            lat: -33.8688,
+        });
         assert_eq!(encoded, 3252046221964352.0);
     }
 
     #[test]
     fn decode_geocode_paris() {
-        let (lat, lng) = decode_geocode(3663832752681684.0);
-        assert!((lat - 48.8534).abs() < 0.0001);
-        assert!((lng - 2.3488).abs() < 0.0001);
+        let point = decode_geocode(3663832752681684.0);
+        assert!((point.lat - 48.8534).abs() < 0.0001);
+        assert!((point.lng - 2.3488).abs() < 0.0001);
     }
 }

@@ -1,8 +1,8 @@
 /// https://github.com/codecrafters-io/redis-geocoding-algorithm
 use crate::{
     Db,
-    parser::{RError, RedisValueRef},
-    zset::zadd,
+    parser::{RArray, RError, RNullArray, RString, RedisValueRef},
+    zset::{zadd, zscore},
 };
 
 const MIN_LATITUDE: f64 = -85.05112878;
@@ -96,6 +96,24 @@ pub fn geoadd(db: &Db, set: String, lng: f64, lat: f64, member: String) -> Redis
     }
     let score = encode_lng_lat(lng, lat);
     zadd(db, set, score, member)
+}
+
+pub fn geopos(db: &Db, set: String, members: Vec<String>) -> RedisValueRef {
+    let results: Vec<RedisValueRef> = members
+        .iter()
+        .map(|member| {
+            let score = zscore(db, set.clone(), member.clone());
+            match score.expect_int() {
+                Ok(score) => {
+                    let (lat, lng) = decode_geocode(score as f64);
+                    RArray(vec![RString(lng.to_string()), RString(lat.to_string())])
+                }
+                _ => RNullArray(),
+            }
+        })
+        .collect();
+
+    RArray(results)
 }
 
 #[cfg(test)]

@@ -48,6 +48,7 @@ pub enum RedisCommand {
     ZScore(String, String),
     ZRem(String, String),
     GeoAdd(String, f64, f64, String),
+    GeoPos(String, Vec<String>),
 }
 
 impl RedisCommand {
@@ -120,6 +121,9 @@ impl Display for RedisCommand {
             RedisCommand::ZRem(key, member) => write!(f, "'ZREM' {} {}", key, member),
             RedisCommand::GeoAdd(key, lng, lat, member) => {
                 write!(f, "'GEOADD' {} {} {} {}", key, lng, lat, member)
+            }
+            RedisCommand::GeoPos(key, members) => {
+                write!(f, "'GEOPOS' {} {}", key, members.join(" "))
             }
         }
     }
@@ -221,6 +225,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "ZSCORE" => zscore(&args),
                     "ZREM" => zrem(&args),
                     "GEOADD" => geoadd(&args),
+                    "GEOPOS" => geopos(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -670,6 +675,21 @@ fn geoadd(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         let lat: f64 = extract_parse_arg(&args[3], "latitude")?;
         let member = extract_string_arg(&args[4], "member")?;
         Ok(RedisCommand::GeoAdd(key, lng, lat, member))
+    }
+}
+
+fn geopos(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() < 3 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let key = extract_string_arg(&args[1], "key")?;
+        let members: Result<Vec<String>, CmdError> = args[2..]
+            .iter()
+            .enumerate()
+            .map(|(i, arg)| extract_string_arg(arg, &format!("value[{}]", i)))
+            .collect();
+        let members = members?;
+        Ok(RedisCommand::GeoPos(key, members))
     }
 }
 

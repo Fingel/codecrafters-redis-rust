@@ -52,6 +52,16 @@ impl RedisValueRef {
             other => Err(other),
         }
     }
+
+    // Extract an int value from a string variant
+    pub fn expect_int(self) -> Result<i64, RedisValueRef> {
+        match self {
+            RedisValueRef::String(s) => String::from_utf8_lossy(&s)
+                .parse()
+                .map_err(|_| RError("ERR value must be an integer")),
+            _ => Err(RError("ERR value must be an integer")),
+        }
+    }
 }
 
 /// Helper functions for constructing RedisValueRef values

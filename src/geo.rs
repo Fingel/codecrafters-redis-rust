@@ -2,9 +2,10 @@
 use crate::{
     Db,
     parser::{RArray, RError, RNullArray, RString, RedisValueRef},
-    zset::{zadd, zscore},
+    zset::{zadd, zrangebyscore, zscore},
 };
 
+const EARTH_RADIUS: f64 = 6372797.560856;
 const MIN_LATITUDE: f64 = -85.05112878;
 const MAX_LATITUDE: f64 = 85.05112878;
 const MIN_LONGITUDE: f64 = -180.0;
@@ -13,6 +14,7 @@ const MAX_LONGITUDE: f64 = 180.0;
 const LATITUDE_RANGE: f64 = MAX_LATITUDE - MIN_LATITUDE;
 const LONGITUDE_RANGE: f64 = MAX_LONGITUDE - MIN_LONGITUDE;
 
+#[derive(Debug, Clone)]
 struct Point {
     lat: f64,
     lng: f64,
@@ -105,14 +107,13 @@ pub fn geoadd(db: &Db, set: String, lng: f64, lat: f64, member: String) -> Redis
 }
 
 fn haversine_distance(origin: Point, dest: Point) -> f64 {
-    const R: f64 = 6372797.560856;
     let lat1 = origin.lat.to_radians();
     let lat2 = dest.lat.to_radians();
     let d_lat = lat2 - lat1;
     let d_lon = (dest.lng - origin.lng).to_radians();
     let a = (d_lat / 2.0).sin().powi(2) + (d_lon / 2.0).sin().powi(2) * lat1.cos() * lat2.cos();
     let c = 2.0 * a.sqrt().asin();
-    R * c
+    EARTH_RADIUS * c
 }
 
 pub fn geopos(db: &Db, set: String, members: Vec<String>) -> RedisValueRef {
@@ -151,9 +152,75 @@ pub fn geodist(db: &Db, set: String, member1: String, member2: String) -> RedisV
     }
 }
 
+pub fn geosearch(
+    db: &Db,
+    key: String,
+    lng: f64,
+    lat: f64,
+    radius: f64,
+    _unit: String,
+) -> RedisValueRef {
+    let origin = Point { lat, lng };
+
+    // Calculate the bounding box in degrees
+    let lat_delta = (radius / EARTH_RADIUS) * (180.0 / std::f64::consts::PI);
+    let lng_delta = lat_delta / lat.to_radians().cos().abs();
+
+    let min_point = Point {
+        lng: (lng - lng_delta).max(MIN_LONGITUDE),
+        lat: (lat - lat_delta).max(MIN_LATITUDE),
+    };
+    let max_point = Point {
+        lng: (lng + lng_delta).min(MAX_LONGITUDE),
+        lat: (lat + lat_delta).min(MAX_LATITUDE),
+    };
+
+    // The box
+    let min_score = encode_point(min_point);
+    let max_score = encode_point(max_point);
+
+    // This gives us rough set of candidates that can be filtered down futher by distance calculation
+    let candidates = zrangebyscore(db, key.clone(), min_score, max_score);
+    // TODO the command returns RedisValueRef, so we have to convert back to native values,
+    // the logic should be factored out
+
+    let filtered_candidates: Vec<String> = match candidates {
+        RedisValueRef::Array(members) => members
+            .into_iter()
+            .filter_map(|member| {
+                if let RedisValueRef::String(member_bytes) = member {
+                    let member_name = String::from_utf8_lossy(&member_bytes).to_string();
+                    if let RedisValueRef::String(score_bytes) =
+                        zscore(db, key.clone(), member_name.clone())
+                        && let Ok(score) = String::from_utf8_lossy(&score_bytes).parse::<f64>()
+                    {
+                        let point = decode_geocode(score);
+                        let distance = haversine_distance(origin.clone(), point);
+                        if distance <= radius {
+                            return Some(member_name);
+                        }
+                    }
+                }
+                None
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    RArray(filtered_candidates.into_iter().map(RString).collect())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use crate::RedisDb;
+
     use super::*;
+
+    fn setup() -> Arc<RedisDb> {
+        Arc::new(RedisDb::new(None, "/tmp/redis-files", "dump.rdb"))
+    }
 
     #[test]
     fn test_encode_point_bangkok() {
@@ -178,5 +245,67 @@ mod tests {
         let point = decode_geocode(3663832752681684.0);
         assert!((point.lat - 48.8534).abs() < 0.0001);
         assert!((point.lng - 2.3488).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_geosearch() {
+        let db = setup();
+        geoadd(
+            &db,
+            "places".to_string(),
+            11.5030378,
+            48.164271,
+            "Munich".to_string(),
+        );
+        geoadd(
+            &db,
+            "places".to_string(),
+            2.2944692,
+            48.8584625,
+            "Paris".to_string(),
+        );
+        geoadd(
+            &db,
+            "places".to_string(),
+            -0.0884948,
+            51.506479,
+            "London".to_string(),
+        );
+
+        let result = geosearch(
+            &db,
+            "places".to_string(),
+            2.0,
+            48.0,
+            100_000.0,
+            "m".to_string(),
+        );
+        assert_eq!(result, RArray(vec![RString("Paris".to_string())]));
+
+        let result = geosearch(
+            &db,
+            "places".to_string(),
+            2.0,
+            48.0,
+            500_000.0,
+            "m".to_string(),
+        );
+        assert_eq!(
+            result,
+            RArray(vec![
+                RString("London".to_string()),
+                RString("Paris".to_string()),
+            ])
+        );
+
+        let result = geosearch(
+            &db,
+            "places".to_string(),
+            11.0,
+            50.0,
+            300_000.0,
+            "m".to_string(),
+        );
+        assert_eq!(result, RArray(vec![RString("Munich".to_string()),]));
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Bound};
 
 use ordered_float::NotNan;
 use skiplist::OrderedSkipList;
@@ -115,6 +115,7 @@ fn normalize_index(index: i64, len: usize) -> usize {
     }
 }
 
+/// Range by index
 pub fn zrange(db: &Db, set: String, start: i64, stop: i64) -> RedisValueRef {
     let set_guard = db.zsets.lock().unwrap();
     match set_guard.get(&set) {
@@ -127,6 +128,28 @@ pub fn zrange(db: &Db, set: String, start: i64, stop: i64) -> RedisValueRef {
             let range = zset
                 .list
                 .index_range(start..stop + 1)
+                .map(|node| RString(node.1.clone()))
+                .collect();
+            RArray(range)
+        }
+        None => RArray(Vec::new()),
+    }
+}
+
+/// Range by Score
+pub fn zrangebyscore(db: &Db, set: String, start: f64, stop: f64) -> RedisValueRef {
+    let set_guard = db.zsets.lock().unwrap();
+    match set_guard.get(&set) {
+        Some(zset) => {
+            let start_score = Score::new(start).unwrap();
+            let stop_score = Score::new(stop).unwrap();
+
+            let start_node = ListNode(start_score, String::new());
+
+            let range: Vec<_> = zset
+                .list
+                .range(Bound::Included(&start_node), Bound::Unbounded)
+                .take_while(|node| node.0 <= stop_score)
                 .map(|node| RString(node.1.clone()))
                 .collect();
             RArray(range)

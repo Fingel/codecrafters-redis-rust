@@ -50,6 +50,7 @@ pub enum RedisCommand {
     GeoAdd(String, f64, f64, String),
     GeoPos(String, Vec<String>),
     GeoDist(String, String, String),
+    GeoSearch(String, f64, f64, f64, String), // key, lng, lat, radius, unit
 }
 
 impl RedisCommand {
@@ -128,6 +129,9 @@ impl Display for RedisCommand {
             }
             RedisCommand::GeoDist(key, member1, member2) => {
                 write!(f, "'GEODIST' {} {} {}", key, member1, member2)
+            }
+            RedisCommand::GeoSearch(key, lng, lat, radius, unit) => {
+                write!(f, "'GEOSEARCH' {} {} {} {} {}", key, lng, lat, radius, unit)
             }
         }
     }
@@ -231,6 +235,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "GEOADD" => geoadd(&args),
                     "GEOPOS" => geopos(&args),
                     "GEODIST" => geodist(&args),
+                    "GEOSEARCH" => geosearch(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -706,6 +711,21 @@ fn geodist(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         let member1 = extract_string_arg(&args[2], "member1")?;
         let member2 = extract_string_arg(&args[3], "member2")?;
         Ok(RedisCommand::GeoDist(key, member1, member2))
+    }
+}
+
+fn geosearch(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    if args.len() != 8 {
+        Err(CmdError::InvalidArgumentNum)
+    } else {
+        let key = extract_string_arg(&args[1], "key")?;
+        let _ = extract_string_arg(&args[2], "FROMLONLAT")?;
+        let lng: f64 = extract_parse_arg(&args[3], "longitude")?;
+        let lat: f64 = extract_parse_arg(&args[4], "latitude")?;
+        let _ = extract_string_arg(&args[5], "RADIUS")?;
+        let radius: f64 = extract_parse_arg(&args[6], "radius")?;
+        let unit = extract_string_arg(&args[7], "unit")?;
+        Ok(RedisCommand::GeoSearch(key, lng, lat, radius, unit))
     }
 }
 

@@ -54,6 +54,7 @@ pub enum RedisCommand {
     AclWhoami(),
     AclGetUser(String),
     AclSetUser(String, String),
+    Auth(String, String),
 }
 
 impl RedisCommand {
@@ -139,6 +140,7 @@ impl Display for RedisCommand {
             RedisCommand::AclWhoami() => write!(f, "'ACL' WHOAMI"),
             RedisCommand::AclGetUser(user) => write!(f, "'ACL' GETUSER {}", user),
             RedisCommand::AclSetUser(user, _) => write!(f, "'ACL' SETUSER {} ***", user),
+            RedisCommand::Auth(username, _) => write!(f, "'AUTH' {} ***", username),
         }
     }
 }
@@ -243,6 +245,7 @@ impl TryFrom<RedisValueRef> for RedisCommand {
                     "GEODIST" => geodist(&args),
                     "GEOSEARCH" => geosearch(&args),
                     "ACL" => acl(&args),
+                    "AUTH" => auth(&args),
                     _ => Err(CmdError::InvalidCommand(command.to_string())),
                 }
             }
@@ -755,6 +758,12 @@ fn acl(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
         }
         _ => Err(CmdError::InvalidArgumentNum),
     }
+}
+
+fn auth(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
+    let username = extract_string_arg(&args[1], "username")?;
+    let password = extract_string_arg(&args[2], "password")?;
+    Ok(RedisCommand::Auth(username, password))
 }
 
 #[cfg(test)]

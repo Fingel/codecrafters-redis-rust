@@ -243,6 +243,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::AclWhoami() => auth::aclwhoami(db),
         RedisCommand::AclGetUser(user) => auth::aclgetuser(db, user),
         RedisCommand::AclSetUser(user, password) => auth::aclsetuser(db, user, password),
+        RedisCommand::Auth(user, password) => auth::auth(db, user, password),
     }
 }
 

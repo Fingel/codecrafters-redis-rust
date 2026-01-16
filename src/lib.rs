@@ -237,7 +237,8 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::GeoSearch(set, lng, lat, radius, unit) => {
             geo::geosearch(db, set, lng, lat, radius, unit)
         }
-        RedisCommand::Acl(command) => auth::acl(db, command),
+        RedisCommand::AclWhoami() => auth::aclwhoami(db),
+        RedisCommand::AclGetUser(user) => auth::aclgetuser(db, user),
     }
 }
 

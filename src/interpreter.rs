@@ -51,7 +51,8 @@ pub enum RedisCommand {
     GeoPos(String, Vec<String>),
     GeoDist(String, String, String),
     GeoSearch(String, f64, f64, f64, String), // key, lng, lat, radius, unit
-    Acl(String),
+    AclWhoami(),
+    AclGetUser(String),
 }
 
 impl RedisCommand {
@@ -134,7 +135,8 @@ impl Display for RedisCommand {
             RedisCommand::GeoSearch(key, lng, lat, radius, unit) => {
                 write!(f, "'GEOSEARCH' {} {} {} {} {}", key, lng, lat, radius, unit)
             }
-            RedisCommand::Acl(command) => write!(f, "'ACL' {}", command),
+            RedisCommand::AclWhoami() => write!(f, "'ACL' WHOAMI"),
+            RedisCommand::AclGetUser(user) => write!(f, "'ACL' GETUSER {}", user),
         }
     }
 }
@@ -733,11 +735,13 @@ fn geosearch(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
 }
 
 fn acl(args: &[RedisValueRef]) -> Result<RedisCommand, CmdError> {
-    if args.len() != 2 {
-        Err(CmdError::InvalidArgumentNum)
-    } else {
-        let command = extract_string_arg(&args[1], "command")?;
-        Ok(RedisCommand::Acl(command))
+    match args.len() {
+        2 => Ok(RedisCommand::AclWhoami()),
+        3 => {
+            let user = extract_string_arg(&args[2], "user")?;
+            Ok(RedisCommand::AclGetUser(user))
+        }
+        _ => Err(CmdError::InvalidArgumentNum),
     }
 }
 

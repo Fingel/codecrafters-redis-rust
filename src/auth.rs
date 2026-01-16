@@ -1,12 +1,12 @@
 use crate::{
     Db,
-    parser::{RString, RedisValueRef},
+    parser::{RArray, RString, RedisValueRef},
 };
 
-pub fn acl(_db: &Db, command: String) -> RedisValueRef {
-    if command == "WHOAMI" {
-        RString("default")
-    } else {
-        RString("OK")
-    }
+pub fn aclwhoami(_db: &Db) -> RedisValueRef {
+    RString("default")
+}
+
+pub fn aclgetuser(_db: &Db, _user: String) -> RedisValueRef {
+    RArray(vec![RString("flags"), RArray(vec![])])
 }

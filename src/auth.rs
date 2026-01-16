@@ -8,5 +8,10 @@ pub fn aclwhoami(_db: &Db) -> RedisValueRef {
 }
 
 pub fn aclgetuser(_db: &Db, _user: String) -> RedisValueRef {
-    RArray(vec![RString("flags"), RArray(vec![RString("nopass")])])
+    RArray(vec![
+        RString("flags"),
+        RArray(vec![RString("nopass")]),
+        RString("passwords"),
+        RArray(vec![]),
+    ])
 }

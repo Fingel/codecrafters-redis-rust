@@ -15,6 +15,7 @@ use crate::zset::ZSet;
 use bytes::Bytes;
 use dashmap::DashMap;
 
+pub mod auth;
 pub mod geo;
 pub mod interpreter;
 pub mod lists;
@@ -236,6 +237,7 @@ pub async fn handle_command(db: &Db, command: RedisCommand) -> RedisValueRef {
         RedisCommand::GeoSearch(set, lng, lat, radius, unit) => {
             geo::geosearch(db, set, lng, lat, radius, unit)
         }
+        RedisCommand::Acl(command) => auth::acl(db, command),
     }
 }
 

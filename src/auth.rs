@@ -2,6 +2,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     Db,
+    interpreter::RedisCommand,
     parser::{RArray, RError, RSimpleString, RString, RedisValueRef},
 };
 
@@ -68,6 +69,17 @@ pub fn auth(db: &Db, username: String, password: String) -> RedisValueRef {
                 RError("WRONGPASS invalid username-password pair or user is disabled.")
             }
         }
-        None => RError("WRONGPASS invalid username-password pair or user is disabled."),
+        None => RSimpleString("OK"),
+    }
+}
+
+pub fn check_auth(db: &Db, command: &RedisCommand) -> bool {
+    // Need to handle case of default user with no password set
+    match command {
+        RedisCommand::Auth(username, password) => {
+            let result = auth(db, username.clone(), password.clone());
+            result == RSimpleString("OK")
+        }
+        _ => db.users.lock().unwrap().is_empty(),
     }
 }

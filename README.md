@@ -5,6 +5,10 @@ with a few notable properties. This is purely a learning
 endeavor, not for production use. This implementation passes the Codecrafters.io
 Redis challenge integration test suite.
 
+**This is a vibe-free project** all the incorrect, incomplete, and horrible slop can be credited
+to my own lack of skill (minus some tab-complete where it was trivial). 
+Spelling and grammatical errors in this README are my own fault.
+
 * [Architecture](#architecture)
 * [Bookmarks and Patterns](#bookmarks-and-patterns)
   1. [Using tokio_util::codec to decode a TCP stream into frames.](#using-tokio_utilcodec-to-decode-a-tcp-stream-into-frames)
@@ -16,6 +20,7 @@ Redis challenge integration test suite.
   7. [Using a SkipList to implement a scored set (zset)](#using-a-skiplist-to-implement-a-scored-set-zset)
   8. [Encoding spherical lat/long pairs as scores to store in a scored set](#encoding-spherical-latlong-pairs-as-scores-to-store-in-a-scored-set)
 * [Areas for further improvement](#areas-for-further-improvement)
+* [Running](#running)
 * [Commands](#commands)
 
 ## Architecture

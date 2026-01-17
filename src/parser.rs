@@ -1,5 +1,7 @@
 /// Code stolen from https://dpbriggs.ca/blog/Implementing-A-Copyless-Redis-Protocol-in-Rust-With-Parsing-Combinators/
-/// For the Code Crafter's Redis Challenge
+/// Repo https://github.com/dpbriggs/redis-oxide/
+/// License: GPLv3
+/// TODO: re-write this using nom
 ///
 use bytes::{Bytes, BytesMut};
 use memchr::memchr;

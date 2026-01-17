@@ -162,9 +162,13 @@ pub fn geosearch(
 ) -> RedisValueRef {
     let origin = Point { lat, lng };
 
-    // Calculate the bounding box in degrees
-    let lat_delta = (radius / EARTH_RADIUS) * (180.0 / std::f64::consts::PI);
-    let lng_delta = lat_delta / lat.to_radians().cos().abs();
+    // https://stackoverflow.com/questions/238260/how-to-calculate-the-bounding-box-for-a-given-lat-lng-location
+    // http://janmatuschek.de/LatitudeLongitudeBoundingCoordinates#LongitudeIncorrect
+    let angular_radius = radius / EARTH_RADIUS; // radians
+    let lat_rad = lat.to_radians();
+
+    let lat_delta = angular_radius.to_degrees();
+    let lng_delta = (angular_radius.sin() / lat_rad.cos()).asin().to_degrees();
 
     let min_point = Point {
         lng: (lng - lng_delta).max(MIN_LONGITUDE),

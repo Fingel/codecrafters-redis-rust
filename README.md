@@ -7,12 +7,16 @@ Redis challenge integration test suite.
 
 * [Architecture](#architecture)
 * [Bookmarks and Patterns](#bookmarks-and-patterns)
-  1. [Using tokio_util::codec to decode a TCP stream into frames.](https://github.com/Fingel/rrredis/tree/master#using-tokio_utilcodec-to-decode-a-tcp-stream-into-frames)
-  2. [Taking over a connection for a replicaiton loop](https://github.com/Fingel/rrredis/tree/master#taking-over-a-connection-for-a-replicaiton-loop)
-  3. [Pubsub pattern using BroadcastStream from tokio_stream](https://github.com/Fingel/rrredis/tree/master#pubsub-pattern-using-broadcaststream-from-tokio_stream)
-  4. [Using a DashMap for lock-free concurrent access](https://github.com/Fingel/rrredis/tree/master#using-a-dashmap-for-lock-free-concurrent-access)
-  5. [Using Criterion to benchmark changes](https://github.com/Fingel/rrredis/tree/master#using-criterion-to-benchmark-changes)
-  6. 
+  1. [Using tokio_util::codec to decode a TCP stream into frames.](#using-tokio_utilcodec-to-decode-a-tcp-stream-into-frames)
+  2. [Taking over a connection for a replicaiton loop](#taking-over-a-connection-for-a-replicaiton-loop)
+  3. [Pubsub pattern using BroadcastStream from tokio_stream](#pubsub-pattern-using-broadcaststream-from-tokio_stream)
+  4. [Using a DashMap for lock-free concurrent access](#using-a-dashmap-for-lock-free-concurrent-access)
+  5. [Using Criterion to benchmark changes](#using-criterion-to-benchmark-changes)
+  6. [Writing a parser for the RDB binary format](#writing-a-parser-for-the-rdb-binary-format)
+  7. [Using a SkipList to implement a scored set (zset)](#using-a-skiplist-to-implement-a-scored-set-zset)
+  8. [Encoding spherical lat/long pairs as scores to store in a scored set](#encoding-spherical-latlong-pairs-as-scores-to-store-in-a-scored-set)
+* [Areas for further improvement](#areas-for-further-improvement)
+* [Commands](#commands)
 
 ## Architecture
 Unlike the official Redis server this implementation is multi-threaded.

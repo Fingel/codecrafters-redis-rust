@@ -112,7 +112,7 @@ fn haversine_distance(origin: Point, dest: Point) -> f64 {
     let d_lat = lat2 - lat1;
     let d_lon = (dest.lng - origin.lng).to_radians();
     let a = (d_lat / 2.0).sin().powi(2) + (d_lon / 2.0).sin().powi(2) * lat1.cos() * lat2.cos();
-    let c = 2.0 * a.sqrt().asin();
+    let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
     EARTH_RADIUS * c
 }
 
@@ -167,16 +167,32 @@ pub fn geosearch(
     let angular_radius = radius / EARTH_RADIUS; // radians
     let lat_rad = lat.to_radians();
 
-    let lat_delta = angular_radius.to_degrees();
-    let lng_delta = (angular_radius.sin() / lat_rad.cos()).asin().to_degrees();
+    let mut min_lat = lat - angular_radius.to_degrees();
+    let mut max_lat = lat + angular_radius.to_degrees();
+
+    let (min_lng, max_lng);
+
+    // Check if a pole is within the search circle (Section 3.4)
+    if min_lat > MIN_LATITUDE && max_lat < MAX_LATITUDE {
+        // No pole within search
+        let lng_delta = (angular_radius.sin() / lat_rad.cos()).asin().to_degrees();
+        min_lng = (lng - lng_delta).max(MIN_LONGITUDE);
+        max_lng = (lng + lng_delta).min(MAX_LONGITUDE);
+    } else {
+        // Pole within search - use the full range
+        min_lat = min_lat.max(MIN_LATITUDE);
+        max_lat = max_lat.min(MAX_LATITUDE);
+        min_lng = MIN_LONGITUDE;
+        max_lng = MAX_LONGITUDE;
+    }
 
     let min_point = Point {
-        lng: (lng - lng_delta).max(MIN_LONGITUDE),
-        lat: (lat - lat_delta).max(MIN_LATITUDE),
+        lng: min_lng,
+        lat: min_lat,
     };
     let max_point = Point {
-        lng: (lng + lng_delta).min(MAX_LONGITUDE),
-        lat: (lat + lat_delta).min(MAX_LATITUDE),
+        lng: max_lng,
+        lat: max_lat,
     };
 
     // The box

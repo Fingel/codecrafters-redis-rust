@@ -328,4 +328,47 @@ mod tests {
         );
         assert_eq!(result, RArray(vec![RString("Munich".to_string()),]));
     }
+
+    #[test]
+    fn test_geosearch_large_radius() {
+        let db = setup();
+        geoadd(
+            &db,
+            "places".to_string(),
+            11.5030378,
+            48.164271,
+            "Munich".to_string(),
+        );
+        geoadd(
+            &db,
+            "places".to_string(),
+            2.2944692,
+            48.8584625,
+            "Paris".to_string(),
+        );
+        geoadd(
+            &db,
+            "places".to_string(),
+            -0.0884948,
+            51.506479,
+            "London".to_string(),
+        );
+
+        let result = geosearch(
+            &db,
+            "places".to_string(),
+            2.0,
+            48.0,
+            17_861_191.0,
+            "m".to_string(),
+        );
+        assert_eq!(
+            result,
+            RArray(vec![
+                RString("London".to_string()),
+                RString("Paris".to_string()),
+                RString("Munich".to_string())
+            ])
+        );
+    }
 }
